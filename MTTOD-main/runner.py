@@ -823,7 +823,7 @@ class MultiWOZRunner(BaseRunner):
         #对同一turn的batch
             for turn_batch in self.iterator.transpose_batch(dial_batch):
                 tihuan=[]
-                batch_encoder_input_ids = []
+                batch_encoder_input_ids_1 = []
                 #t:同1turn中的第几个item
                 for t, turn in enumerate(turn_batch):
 
@@ -833,9 +833,9 @@ class MultiWOZRunner(BaseRunner):
                     if self.cfg.data_type == 'CRS':
                         user_history[t].append(self.reader.tokenizer.decode(turn["usdx"][1:-1]))
 
-                    encoder_input_ids = context + turn["user"] + [self.reader.eos_token_id]
-                    #print(str(t)+ " "+self.reader.tokenizer.decode(encoder_input_ids))
-                    batch_encoder_input_ids.append(self.iterator.tensorize(encoder_input_ids))
+                    encoder_input_ids_1 = context + turn["user"] + [self.reader.eos_token_id]
+                    batch_encoder_input_ids_1.append(self.iterator.tensorize(encoder_input_ids_1))
+
 
                     turn_domain = turn["turn_domain"][-1]
 
@@ -844,23 +844,23 @@ class MultiWOZRunner(BaseRunner):
 
                     domain_history[t].append(turn_domain)
 
-                batch_encoder_input_ids = pad_sequence(batch_encoder_input_ids,
+                batch_encoder_input_ids_1 = pad_sequence(batch_encoder_input_ids_1,
                                                        batch_first=True,
                                                        padding_value=self.reader.pad_token_id)
-                batch_encoder_input_ids = batch_encoder_input_ids.to(self.cfg.device)
+                batch_encoder_input_ids_1 = batch_encoder_input_ids_1.to(self.cfg.device)
 
                 attention_mask = torch.where(
-                    batch_encoder_input_ids == self.reader.pad_token_id, 0, 1)
+                    batch_encoder_input_ids_1 == self.reader.pad_token_id, 0, 1)
                 # belief tracking
                 #encoder
                 with torch.no_grad():
-                    encoder_outputs = self.model(input_ids=batch_encoder_input_ids,
+                    encoder_outputs_1 = self.model(input_ids=batch_encoder_input_ids_1,
                                                  attention_mask=attention_mask,
                                                  return_dict=False,
                                                  encoder_only=True,
                                                  add_auxiliary_task=self.cfg.add_auxiliary_task)
 
-                    span_outputs, encoder_hidden_states = encoder_outputs
+                    span_outputs, encoder_hidden_states = encoder_outputs_1
                     if isinstance(encoder_hidden_states, tuple):
                         last_hidden_state = encoder_hidden_states[0]
                     else:
@@ -885,7 +885,7 @@ class MultiWOZRunner(BaseRunner):
                 if self.cfg.add_auxiliary_task:
                     pred_spans = span_outputs[1].cpu().numpy().tolist()
 
-                    input_ids = batch_encoder_input_ids.cpu().numpy().tolist()
+                    input_ids = batch_encoder_input_ids_1.cpu().numpy().tolist()
                 else:
                     pred_spans = None
                     input_ids = None
@@ -902,6 +902,7 @@ class MultiWOZRunner(BaseRunner):
 
 
                 #DST完工了
+
 
                 if self.cfg.task == "e2e":
                     dbpn = []

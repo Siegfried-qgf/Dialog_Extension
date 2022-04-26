@@ -566,7 +566,7 @@ class MultiWOZReader(BaseReader):
         self.db = MultiWozDB(os.path.join("data", "MultiWOZ_{}".format(self.version), "db"))
         #todo maxlength
         super(MultiWOZReader, self).__init__(backbone,cfg)
-        self.tokenizer.model_max_length = 1600
+        self.tokenizer.model_max_length = 1200
 
     def get_data_dir(self):
         print(self.cfg.data_type)
