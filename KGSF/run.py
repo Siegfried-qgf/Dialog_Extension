@@ -28,7 +28,6 @@ from tqdm import tqdm
 from math import exp
 import os
 import random
-os.environ['CUDA_VISIBLE_DEVICES']='3'
 import signal
 import json
 import argparse

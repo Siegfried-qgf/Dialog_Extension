@@ -61,10 +61,10 @@ def trans(path):
         id=item["id"]
         data_m[id]=it
     print(len(data_m))
-    save_json(data_m, "./train_QA.json")
+    save_json(data_m, "./dev_QA.json")
     return data_m
 
 
 if __name__ == "__main__":
-    trans('./coqa-train-v1.0.json')
+    trans('./coqa-dev-v1.0.json')
 

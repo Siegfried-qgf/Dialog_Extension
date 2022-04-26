@@ -191,9 +191,7 @@ class BaseRunner(metaclass=ABCMeta):
 
         model.to(self.cfg.device)
 
-        #:todo dp
-        if self.cfg.num_gpus > 1:
-            model = torch.nn.DataParallel(model)
+
 
         return model
 
@@ -288,27 +286,28 @@ class MultiWOZRunner(BaseRunner):
          'learn_positional_embeddings': False, 'embeddings_scale': True, 'n_entity': 64368, 'n_relation': 214,
          'n_concept': 29308, 'n_con_relation': 48, 'dim': 128, 'n_hop': 2, 'kge_weight': 1, 'l2_weight': 2.5e-06,
          'n_memory': 32, 'item_update_mode': '0,1', 'using_all_hops': True, 'num_bases': 8}
-
-        self.loop=run.TrainLoop_fusion_rec(opt,is_finetune=False)
-        self.loop.model.load_model()
+        if cfg.data_type=="CRS" and cfg.run_type=="test":
+            self.loop=run.TrainLoop_fusion_rec(opt,is_finetune=False)
+            self.loop.model.load_model()
+            self.entity2entityId = pkl.load(open('./data/CRS/ReDial/entity2entityId.pkl', 'rb'))
+            self.e2id = {}
+            a = list(self.entity2entityId.keys())
+            for k in a:
+                temp = self.entity2entityId[k]
+                if isinstance(k, str):
+                    k = k.lower()
+                    self.e2id[k] = temp
+            self.entity_max = len(self.entity2entityId)
+            self.id2entity = pkl.load(open('./data/CRS/ReDial/id2entity.pkl', 'rb'))
+            self.subkg = pkl.load(open('./data/CRS/ReDial/subkg.pkl', 'rb'))  # need not back process
+            self.text_dict = pkl.load(open('./data/CRS/ReDial/text_dict.pkl', 'rb'))
+            self.word2index = json.load(open('./data/CRS/ReDial/word2index_redial.json', encoding='utf-8'))
+            self.key2index = json.load(open('./data/CRS/ReDial/key2index_3rd.json', encoding='utf-8'))
+            self.stopwords = set(
+                        [word.strip() for word in open('./data/CRS/ReDial/stopwords.txt', encoding='utf-8')])
+            self.movie_ids = pkl.load(open("./data/CRS/ReDial/movie_ids.pkl", "rb"))
         self.iterator = MultiWOZIterator(reader)
-        self.entity2entityId = pkl.load(open('./data/CRS/ReDial/entity2entityId.pkl', 'rb'))
-        self.e2id = {}
-        a=list(self.entity2entityId.keys())
-        for k in a:
-            temp=self.entity2entityId[k]
-            if isinstance(k, str):
-                k=k.lower()
-                self.e2id[k]=temp
 
-        self.entity_max = len(self.entity2entityId)
-        self.id2entity = pkl.load(open('./data/CRS/ReDial/id2entity.pkl', 'rb'))
-        self.subkg = pkl.load(open('./data/CRS/ReDial/subkg.pkl', 'rb'))  # need not back process
-        self.text_dict = pkl.load(open('./data/CRS/ReDial/text_dict.pkl', 'rb'))
-        self.word2index = json.load(open('./data/CRS/ReDial/word2index_redial.json', encoding='utf-8'))
-        self.key2index = json.load(open('./data/CRS/ReDial/key2index_3rd.json', encoding='utf-8'))
-        self.stopwords = set([word.strip() for word in open('./data/CRS/ReDial/stopwords.txt', encoding='utf-8')])
-        self.movie_ids = pkl.load(open("./data/CRS/ReDial/movie_ids.pkl", "rb"))
         super(MultiWOZRunner, self).__init__(cfg, reader)
 
     def step_fn(self, inputs, span_labels, belief_labels, resp_labels):
