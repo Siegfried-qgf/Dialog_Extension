@@ -312,15 +312,17 @@ class MultiWOZRunner(BaseRunner):
         super(MultiWOZRunner, self).__init__(cfg, reader)
 
     def step_fn(self, inputs, span_labels, belief_labels, resp_labels):
-        inputs = inputs.to(self.cfg.device)
+        inputs_1,inputs_2=inputs
+        inputs_1 = inputs_1.to(self.cfg.device)
+        inputs_2 = inputs_2.to(self.cfg.device)
         span_labels = span_labels.to(self.cfg.device)
         belief_labels = belief_labels.to(self.cfg.device)
         resp_labels = resp_labels.to(self.cfg.device)
 
-        attention_mask = torch.where(inputs == self.reader.pad_token_id, 0, 1)
+        attention_mask_1 = torch.where(inputs_1 == self.reader.pad_token_id, 0, 1)
 
-        belief_outputs = self.model(input_ids=inputs,
-                                    attention_mask=attention_mask,
+        belief_outputs = self.model(input_ids=inputs_1,
+                                    attention_mask=attention_mask_1,
                                     span_labels=span_labels,
                                     lm_labels=belief_labels,
                                     return_dict=False,
@@ -333,13 +335,14 @@ class MultiWOZRunner(BaseRunner):
         span_loss = belief_outputs[2]
         span_pred = belief_outputs[3]
 
+        attention_mask_2 = torch.where(inputs_2 == self.reader.pad_token_id, 0, 1)
         if self.cfg.task == "e2e":
-            last_hidden_state = belief_outputs[5]
+            #last_hidden_state = belief_outputs[5]
 
-            encoder_outputs = BaseModelOutput(last_hidden_state=last_hidden_state)
+            #encoder_outputs = BaseModelOutput(last_hidden_state=last_hidden_state)
 
-            resp_outputs = self.model(attention_mask=attention_mask,
-                                      encoder_outputs=encoder_outputs,
+            resp_outputs = self.model(input_ids=inputs_2,
+                                      attention_mask=attention_mask_2,
                                       lm_labels=resp_labels,
                                       return_dict=False,
                                       decoder_type="resp")

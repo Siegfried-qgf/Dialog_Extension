@@ -258,13 +258,16 @@ class MultiWOZIterator(BaseIterator):
 
     def get_data_iterator(self, all_batches, task, ururu, add_auxiliary_task=False, context_size=-1):
         for dial_batch in all_batches:
-            batch_encoder_input_ids = []
+            batch_encoder_input_ids_1 = []
+            batch_encoder_input_ids_2 = []
+
             batch_span_label_ids = []
             batch_belief_label_ids = []
             batch_resp_label_ids = []
 
             for dial in dial_batch:
-                dial_encoder_input_ids = []
+                dial_encoder_input_ids_1 = []
+                dial_encoder_input_ids_2 = []
                 dial_span_label_ids = []
                 dial_belief_label_ids = []
                 dial_resp_label_ids = []
@@ -274,8 +277,9 @@ class MultiWOZIterator(BaseIterator):
                 for turn in dial:
                     context, span_dict = self.flatten_dial_history(
                         dial_history, span_history, len(turn["user"]), context_size)
-
-                    encoder_input_ids = context + turn["user"] + [self.reader.eos_token_id]
+                    encoder_input_ids_1 = context + turn["user"]+ [self.reader.eos_token_id]
+                    #修改4/26
+                    encoder_input_ids_2 = context + turn["user"] + turn["dbpn"] + [self.reader.eos_token_id]
 
                     # add current span of user utterance
                     for domain, ss_dict in turn["user_span"].items():
@@ -284,7 +288,7 @@ class MultiWOZIterator(BaseIterator):
                             end_idx = span[1] + len(context)
                             span_dict[s].append((start_idx, end_idx))
 
-                    span_label_tokens = ["O"] * len(encoder_input_ids)
+                    span_label_tokens = ["O"] * len(encoder_input_ids_1)
                     for slot, spans in span_dict.items():
                         for span in spans:
                             for i in range(span[0], span[1]):
@@ -307,10 +311,13 @@ class MultiWOZIterator(BaseIterator):
                     else:
                         resp = turn["dbpn"] + turn["aspn"] + turn["resp"]
                     '''
-                    resp = turn["dbpn"] + turn["aspn"] + turn["redx"]
+                    # 修改4/27
+                    #resp = turn["dbpn"] + turn["aspn"] + turn["redx"]
+                    resp =turn["aspn"] + turn["redx"]
                     resp_label_ids = resp + [self.reader.eos_token_id]
 
-                    dial_encoder_input_ids.append(encoder_input_ids)
+                    dial_encoder_input_ids_1.append(encoder_input_ids_1)
+                    dial_encoder_input_ids_2.append(encoder_input_ids_2)
                     dial_span_label_ids.append(span_label_ids)
                     dial_belief_label_ids.append(belief_label_ids)
                     dial_resp_label_ids.append(resp_label_ids)
@@ -363,14 +370,16 @@ class MultiWOZIterator(BaseIterator):
                     dial_history.append(turn_text)
                     span_history.append(turn_span_info)
 
-                batch_encoder_input_ids.append(dial_encoder_input_ids)
+                batch_encoder_input_ids_1.append(dial_encoder_input_ids_1)
+                batch_encoder_input_ids_2.append(dial_encoder_input_ids_2)
                 batch_span_label_ids.append(dial_span_label_ids)
                 batch_belief_label_ids.append(dial_belief_label_ids)
                 batch_resp_label_ids.append(dial_resp_label_ids)
 
             # turn first
 
-            batch_encoder_input_ids = self.transpose_batch(batch_encoder_input_ids)
+            batch_encoder_input_ids_1 = self.transpose_batch(batch_encoder_input_ids_1)
+            batch_encoder_input_ids_2 = self.transpose_batch(batch_encoder_input_ids_2)
             batch_span_label_ids = self.transpose_batch(batch_span_label_ids)
             batch_belief_label_ids = self.transpose_batch(batch_belief_label_ids)
             batch_resp_label_ids = self.transpose_batch(batch_resp_label_ids)
@@ -379,15 +388,18 @@ class MultiWOZIterator(BaseIterator):
 
 
 
-            num_turns = len(batch_encoder_input_ids)
+            num_turns = len(batch_encoder_input_ids_1)
 
-            tensor_encoder_input_ids = []
+            tensor_encoder_input_ids_1 = []
+            tensor_encoder_input_ids_2 = []
             tensor_span_label_ids = []
             tensor_belief_label_ids = []
             tensor_resp_label_ids = []
             for t in range(num_turns):
-                tensor_encoder_input_ids = [
-                    self.tensorize(b) for b in batch_encoder_input_ids[t]]
+                tensor_encoder_input_ids_1 = [
+                    self.tensorize(b) for b in batch_encoder_input_ids_1[t]]
+                tensor_encoder_input_ids_2 = [
+                    self.tensorize(b) for b in batch_encoder_input_ids_2[t]]
                 tensor_span_label_ids = [
                     self.tensorize(b) for b in batch_span_label_ids[t]]
                 tensor_belief_label_ids = [
@@ -395,9 +407,13 @@ class MultiWOZIterator(BaseIterator):
                 tensor_resp_label_ids = [
                     self.tensorize(b) for b in batch_resp_label_ids[t]]
 
-                tensor_encoder_input_ids = pad_sequence(tensor_encoder_input_ids,
+                tensor_encoder_input_ids_1 = pad_sequence(tensor_encoder_input_ids_1,
                                                         batch_first=True,
                                                         padding_value=self.reader.pad_token_id)
+
+                tensor_encoder_input_ids_2 = pad_sequence(tensor_encoder_input_ids_2,
+                                                          batch_first=True,
+                                                          padding_value=self.reader.pad_token_id)
 
                 tensor_span_label_ids = pad_sequence(tensor_span_label_ids,
                                                     batch_first=True,
@@ -411,7 +427,7 @@ class MultiWOZIterator(BaseIterator):
                                                      batch_first=True,
                                                      padding_value=self.reader.pad_token_id)
 
-                yield tensor_encoder_input_ids, (tensor_span_label_ids, tensor_belief_label_ids, tensor_resp_label_ids)
+                yield (tensor_encoder_input_ids_1,tensor_encoder_input_ids_2), (tensor_span_label_ids, tensor_belief_label_ids, tensor_resp_label_ids)
 
 
 class BaseReader(object):
