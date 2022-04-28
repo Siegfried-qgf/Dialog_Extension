@@ -159,7 +159,6 @@ class BaseIterator(object):
         #print("input"+str(len_postfix))
         spare_len = self.reader.max_seq_len - len_postfix - 1
         while ctx_len >= spare_len:
-
             ctx_len -= len(windowed_context[0])
             windowed_context.pop(0)
             if len(windowed_span_history) > 0:
@@ -280,7 +279,7 @@ class MultiWOZIterator(BaseIterator):
                     encoder_input_ids_1 = context + turn["user"]+ [self.reader.eos_token_id]
                     #修改4/26
                     encoder_input_ids_2 = context + turn["user"] + turn["dbpn"] + [self.reader.eos_token_id]
-
+                    print(self.reader.tokenizer.decode(encoder_input_ids_2))
                     # add current span of user utterance
                     for domain, ss_dict in turn["user_span"].items():
                         for s, span in ss_dict.items():
@@ -566,7 +565,7 @@ class MultiWOZReader(BaseReader):
         self.db = MultiWozDB(os.path.join("data", "MultiWOZ_{}".format(self.version), "db"))
         #todo maxlength
         super(MultiWOZReader, self).__init__(backbone,cfg)
-        self.tokenizer.model_max_length = 1200
+        self.tokenizer.model_max_length = 1800
 
     def get_data_dir(self):
         print(self.cfg.data_type)

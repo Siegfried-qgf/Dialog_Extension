@@ -11,7 +11,7 @@ from tqdm import tqdm
 from collections import OrderedDict, defaultdict
 import sys
 sys.path.append("./..")
-from KGSF import run
+#from KGSF import run
 import numpy as np
 import pickle as pkl
 import warnings
@@ -286,7 +286,8 @@ class MultiWOZRunner(BaseRunner):
          'learn_positional_embeddings': False, 'embeddings_scale': True, 'n_entity': 64368, 'n_relation': 214,
          'n_concept': 29308, 'n_con_relation': 48, 'dim': 128, 'n_hop': 2, 'kge_weight': 1, 'l2_weight': 2.5e-06,
          'n_memory': 32, 'item_update_mode': '0,1', 'using_all_hops': True, 'num_bases': 8}
-        if cfg.data_type=="CRS" and cfg.run_type=="test":
+        if cfg.data_type=="CRS" and cfg.run_type=="predict":
+            from KGSF import run
             self.loop=run.TrainLoop_fusion_rec(opt,is_finetune=False)
             self.loop.model.load_model()
             self.entity2entityId = pkl.load(open('./data/CRS/ReDial/entity2entityId.pkl', 'rb'))
@@ -824,6 +825,7 @@ class MultiWOZRunner(BaseRunner):
             for turn_batch in self.iterator.transpose_batch(dial_batch):
                 tihuan=[]
                 batch_encoder_input_ids_1 = []
+                batch_encoder_input_ids_2 = []
                 #t:同1turn中的第几个item
                 for t, turn in enumerate(turn_batch):
 
@@ -866,10 +868,10 @@ class MultiWOZRunner(BaseRunner):
                     else:
                         last_hidden_state = encoder_hidden_states
                     # wrap up encoder outputs
-                    encoder_outputs = BaseModelOutput(
+                    encoder_outputs_1 = BaseModelOutput(
                         last_hidden_state=last_hidden_state)
                     # 生成belief_state
-                    belief_outputs = self.model.generate(encoder_outputs=encoder_outputs,
+                    belief_outputs = self.model.generate(encoder_outputs=encoder_outputs_1,
                                                          attention_mask=attention_mask,
                                                          eos_token_id=self.reader.eos_token_id,
                                                          max_length=200,
@@ -938,21 +940,34 @@ class MultiWOZRunner(BaseRunner):
                                 bos_token=definitions.BOS_DB_TOKEN,
                                 eos_token=definitions.EOS_DB_TOKEN)
                             turn["dbpn_gen"] = dbpn_gen
+                        for t, turn in enumerate(turn_batch):
 
+                            context, _ = self.iterator.flatten_dial_history(
+                                dial_history[t], [], (len(turn["user"])+len(turn["dbpn_gen"])), self.cfg.context_size)
+                            # 4/20
+                            encoder_input_ids_2 = context + turn["user"] + turn["dbpn"]+ [self.reader.eos_token_id]
+                            batch_encoder_input_ids_2.append(self.iterator.tensorize(encoder_input_ids_2))
+                        batch_encoder_input_ids_2 = pad_sequence(batch_encoder_input_ids_2,
+                                                                     batch_first=True,
+                                                                     padding_value=self.reader.pad_token_id)
+                        batch_encoder_input_ids_2 = batch_encoder_input_ids_2.to(self.cfg.device)
 
-                            dbpn.append(dbpn_gen)
-
+                        attention_mask_2 = torch.where(
+                                batch_encoder_input_ids_2 == self.reader.pad_token_id, 0, 1)
+                            #dbpn.append(dbpn_gen)
+                    '''
                     for t, db in enumerate(dbpn):
                         if self.cfg.use_true_curr_aspn:
                             db += turn_batch[t]["aspn"]
 
                         # T5 use pad_token as start_decoder_token_id
                         dbpn[t] = [self.reader.pad_token_id] + db
-
+                    '''
 
                     # aspn has different length
                     #如果用标注的aspn
                     if self.cfg.use_true_curr_aspn:
+
                         for t, _dbpn in enumerate(dbpn):
                             resp_decoder_input_ids = self.iterator.tensorize([_dbpn])
 
@@ -983,20 +998,36 @@ class MultiWOZRunner(BaseRunner):
                                 turn_batch[t].update(**decoded_resp_outputs[0])
 
                     else:
+                        '''
                         dblist=[]
                         for i,d in enumerate(dbpn):
                             dblist.append(self.iterator.tensorize(d))
                         resp_decoder_input_ids=pad_sequence(dblist,batch_first=True,padding_value=self.reader.pad_token_id)
+                        
                         #resp_decoder_input_ids = self.iterator.tensorize(dbpn)
 
                         resp_decoder_input_ids = resp_decoder_input_ids.to(self.cfg.device)
+                        '''
+                        with torch.no_grad():
+                            encoder_outputs_2 = self.model(input_ids=batch_encoder_input_ids_2,
+                                                           attention_mask=attention_mask_2,
+                                                           return_dict=False,
+                                                           encoder_only=True,
+                                                           add_auxiliary_task=self.cfg.add_auxiliary_task)
 
+                            span_outputs_2, encoder_hidden_states_2 = encoder_outputs_2
+                            if isinstance(encoder_hidden_states_2, tuple):
+                                last_hidden_state_2 = encoder_hidden_states_2[0]
+                            else:
+                                last_hidden_state_2 = encoder_hidden_states_2
+                            # wrap up encoder outputs
+                            encoder_outputs_2 = BaseModelOutput(
+                                last_hidden_state=last_hidden_state_2)
                         # response generation
                         with torch.no_grad():
                             resp_outputs = self.model.generate(
-                                encoder_outputs=encoder_outputs,
-                                attention_mask=attention_mask,
-                                decoder_input_ids=resp_decoder_input_ids,
+                                encoder_outputs=encoder_outputs_2,
+                                attention_mask=attention_mask_2,
                                 eos_token_id=self.reader.eos_token_id,
                                 max_length=300,
                                 do_sample=self.cfg.do_sample,
@@ -1089,11 +1120,11 @@ class MultiWOZRunner(BaseRunner):
             logger.info('match: %2.2f; success: %2.2f; bleu: %2.2f; score: %.2f' % (
                 match, success, bleu, score))
             '''
-
+        '''
         evaluator = eval_chitchat.CC_evaluator(self.reader)
         print(evaluator.bleu(results))
         print(evaluator.dist(results))
-
+        '''
 
 
 

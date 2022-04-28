@@ -19,11 +19,8 @@ def trans(path):
         dict={}
         '''
         toklist=tok.encode(item["story"])
-        if len(toklist)>500:
+        if len(toklist)>600:
             continue
-            #todo:这里有问题 问题很大
-
-        print(len(tok.encode(item["story"])))
         '''
         dict["user"] = "I wanna share a story with you. "+item["story"]
         dict["user_delex"] = "I wanna share a story with you. "+item["story"]
