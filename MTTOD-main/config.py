@@ -44,6 +44,7 @@ def add_config(parser):
 
     group = parser.add_argument_group("Training")
     group.add_argument("-batch_size", type=int, default=8)
+    group.add_argument("-batch_size_per_gpu", type=int, default=8)
     group.add_argument("-epochs", type=int, default=20)
     group.add_argument("-warmup_steps", type=int, default=-1)
     group.add_argument("-warmup_ratio", type=float, default=0.1)
@@ -82,6 +83,7 @@ def add_config(parser):
     group.add_argument("-model_dir", type=str, default="checkpoints")
     group.add_argument("-seed", type=int, default=42)
     group.add_argument("-ckpt", type=str, default=None)
+    group.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
     group.add_argument("-log_frequency", type=int, default=100)
     group.add_argument("-max_to_keep_ckpt", type=int, default=5)
     group.add_argument("-num_gpus", type=int, default=1)

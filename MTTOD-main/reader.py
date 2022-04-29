@@ -21,7 +21,7 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 """
-
+import math
 import os
 import copy
 import spacy
@@ -40,8 +40,265 @@ from utils import definitions
 from utils.io_utils import load_json, load_pickle, save_pickle, get_or_create_logger
 from external_knowledges import MultiWozDB
 import config
+from torch.utils.data import Dataset
 logger = get_or_create_logger(__name__)
 
+class SequentialDistributedSampler(torch.utils.data.sampler.Sampler):
+    '''
+    Using for inference with DDP.
+    '''
+    def __init__(self, dataset, batch_size, rank=None, num_replicas=None):
+        if num_replicas is None:
+            if not torch.distributed.is_available():
+                raise RuntimeError("Requires distributed package to be available")
+            num_replicas = torch.distributed.get_world_size()
+        if rank is None:
+            if not torch.distributed.is_available():
+                raise RuntimeError("Requires distributed package to be available")
+            rank = torch.distributed.get_rank()
+
+        self.dataset = dataset
+        self.num_replicas = num_replicas
+        self.rank = rank
+        self.batch_size = batch_size
+        self.num_samples = int(math.ceil(len(self.dataset) * 1.0 / self.batch_size / self.num_replicas)) * self.batch_size
+        self.total_size = self.num_samples * self.num_replicas
+
+    def __iter__(self):
+        indices = list(range(len(self.dataset)))
+        indices += [indices[-1]] * (self.total_size - len(indices))
+        indices = indices[self.rank * self.num_samples: (self.rank + 1) * self.num_samples]
+        return iter(indices)
+
+    def __len__(self):
+        return self.num_samples
+
+class MultiWOZDataset(Dataset):
+    def __init__(self, reader, data_type, task, ururu, context_size=-1, num_dialogs=-1, excluded_domains=None):
+        super().__init__()
+        self.reader = reader
+        self.task = task
+        self.ururu = ururu
+        self.context_size = context_size
+        self.dials = self.reader.data[data_type]
+        self.dial_by_domain = load_json("data/MultiWOZ_2.0/dial_by_domain.json")
+
+        if excluded_domains is not None:
+            logger.info("Exclude domains: {}".format(excluded_domains))
+
+            target_dial_ids = []
+            for domains, dial_ids in self.dial_by_domain.items():
+                domain_list = domains.split("-")
+
+                if len(set(domain_list) & set(excluded_domains)) == 0:
+                    target_dial_ids.extend(dial_ids)
+
+            self.dials = [d for d in self.dials if d[0]["dial_id"] in target_dial_ids]
+
+        if num_dialogs > 0:
+            self.dials = random.sample(self.dials, min(num_dialogs, len(self.dials)))
+
+        self.create_turn_batch()
+
+    def create_turn_batch(self):
+        logger.info("Creating turn batches...")
+        self.turn_encoder_input_ids_1 = []
+        self.turn_encoder_input_ids_2 = []
+        self.turn_span_label_ids = []
+        self.turn_belief_label_ids = []
+        self.turn_resp_label_ids = []
+
+        for dial in tqdm(self.dials, desc='Creating turn batches'):
+
+            dial_history = []
+            span_history = []
+
+            for turn in dial:
+                context, span_dict = self.flatten_dial_history(dial_history, span_history, len(turn['user']),
+                                                               self.context_size)
+                encoder_input_ids_1 = context + turn['user'] + [self.reader.eos_token_id]
+                encoder_input_ids_2 = context + turn["user"] + turn["dbpn"] + [self.reader.eos_token_id]
+
+                # add current span of user utterance
+                for domain, ss_dict in turn['user_span'].items():
+                    for s, span in ss_dict.items():
+                        start_idx = span[0] + len(context)
+                        end_idx = span[1] + len(context)
+                        span_dict[s].append((start_idx, end_idx))
+
+                span_label_tokens = ['O'] * len(encoder_input_ids_1)
+                for slot, spans in span_dict.items():
+                    for span in spans:
+                        for i in range(span[0], span[1]):
+                            span_label_tokens[i] = slot
+
+                span_label_ids = [self.reader.span_tokens.index(t) for t in span_label_tokens]
+                bspn = turn['bspn']
+                bspn_label = bspn
+                belief_label_ids = bspn_label + [self.reader.eos_token_id]
+
+                resp = turn['aspn'] + turn['redx']
+                resp_label_ids = resp + [self.reader.eos_token_id]
+
+                self.turn_encoder_input_ids_1.append(encoder_input_ids_1)
+                self.turn_encoder_input_ids_2.append(encoder_input_ids_2)
+                self.turn_span_label_ids.append(span_label_ids)
+                self.turn_belief_label_ids.append(belief_label_ids)
+                self.turn_resp_label_ids.append(resp_label_ids)
+
+                turn_span_info = {}
+                for domain, ss_dict in turn['user_span'].items():
+                    for s, span in ss_dict.items():
+                        if domain not in turn_span_info:
+                            turn_span_info[domain] = {}
+
+                        if s not in turn_span_info[domain]:
+                            turn_span_info[domain][s] = []
+
+                        turn_span_info[domain][s].append(span)
+
+                if self.task == 'dst':
+                    for domain, ss_dict in turn['resp_span'].items():
+                        for s, span in ss_dict.items():
+                            if domain not in turn_span_info:
+                                turn_span_info[domain] = {}
+
+                            if s not in turn_span_info[domain]:
+                                turn_span_info[domain][s] = []
+
+                            adjustment = len(turn["user"])
+
+                            if not self.ururu:
+                                adjustment += (len(bspn) + len(turn['dbpn']) + len(turn['aspn']))
+
+                            start_idx = span[0] + adjustment
+                            end_idx = span[1] + adjustment
+
+                            turn_span_info[domain][s].append((start_idx, end_idx))
+
+                if self.ururu:
+                    if self.task == 'dst':
+                        turn_text = turn['user'] + turn['resp']
+                    else:
+                        turn_text = turn['user'] + turn['redx']
+                else:
+                    if self.task == 'dst':
+                        turn_text = turn['user'] + bspn + turn['dbpn'] + turn['aspn'] + turn['resp']
+                    else:
+                        turn_text = turn['user'] + bspn + turn['dbpn'] + turn['aspn'] + turn['resp']
+
+                dial_history.append(turn_text)
+                span_history.append(turn_span_info)
+
+    def flatten_dial_history(self, dial_history, span_history, len_postfix, context_size):
+        if context_size > 0:
+            context_size -= 1
+
+        if context_size == 0:
+            windowed_context = []
+            windowed_span_history = []
+        elif context_size > 0:
+            windowed_context = dial_history[-context_size:]
+            windowed_span_history = span_history[-context_size:]
+        else:
+            windowed_context = dial_history
+            windowed_span_history = span_history
+
+        ctx_len = sum([len(c) for c in windowed_context])
+
+        # consider eos_token
+        spare_len = self.reader.max_seq_len - len_postfix - 1
+        while ctx_len >= spare_len:
+            ctx_len -= len(windowed_context[0])
+            windowed_context.pop(0)
+            if len(windowed_span_history) > 0:
+                windowed_span_history.pop(0)
+
+        context_span_info = defaultdict(list)
+        for t, turn_span_info in enumerate(windowed_span_history):
+            for domain, span_info in turn_span_info.items():
+                if isinstance(span_info, dict):
+                    for slot, spans in span_info.items():
+                        adjustment = 0
+
+                        if t > 0:
+                            adjustment += sum([len(c)
+                                               for c in windowed_context[:t]])
+
+                        for span in spans:
+                            start_idx = span[0] + adjustment
+                            end_idx = span[1] + adjustment
+
+                            context_span_info[slot].append((start_idx, end_idx))
+
+                elif isinstance(span_info, list):
+                    slot = domain
+                    spans = span_info
+
+                    adjustment = 0
+                    if t > 0:
+                        adjustment += sum([len(c)
+                                           for c in windowed_context[:t]])
+
+                    for span in spans:
+                        start_idx = span[0] + adjustment
+                        end_idx = span[1] + adjustment
+
+                        context_span_info[slot].append((start_idx, end_idx))
+
+        context = list(chain(*windowed_context))
+
+        return context, context_span_info
+
+    def __len__(self):
+        return len(self.turn_encoder_input_ids_1)
+
+    def __getitem__(self, index):
+        return self.turn_encoder_input_ids_1[index],self.turn_encoder_input_ids_2[index],self.turn_span_label_ids[index], self.turn_belief_label_ids[index], \
+               self.turn_resp_label_ids[index]
+
+
+class CollatorPredict(object):
+    def __init__(self):
+        super().__init__()
+
+    def __call__(self, batch):
+        max_turn_num = max([len(item) for item in batch])
+
+        for item in batch:
+            while len(item) < max_turn_num:
+                item.append({})
+
+        return batch
+
+class CollatorTrain(object):
+    def __init__(self, pad_token_id, tokenizer):
+        super().__init__()
+        self.pad_token_id = pad_token_id
+        self.tokenizer = tokenizer
+
+    def __call__(self, batch):
+        batch_encoder_input_ids_1 = []
+        batch_encoder_input_ids_2 = []
+        batch_span_label_ids = []
+        batch_belief_label_ids = []
+        batch_resp_label_ids = []
+        batch_size = len(batch)
+
+        for i in range(batch_size):
+            encoder_input_ids_1,encoder_input_ids_2,span_label_ids, belief_label_ids, resp_label_ids = batch[i]
+            batch_encoder_input_ids_1.append(torch.tensor(encoder_input_ids_1, dtype=torch.long))
+            batch_encoder_input_ids_2.append(torch.tensor(encoder_input_ids_2, dtype=torch.long))
+            batch_span_label_ids.append(torch.tensor(span_label_ids, dtype=torch.long))
+            batch_belief_label_ids.append(torch.tensor(belief_label_ids, dtype=torch.long))
+            batch_resp_label_ids.append(torch.tensor(resp_label_ids, dtype=torch.long))
+
+        batch_encoder_input_ids_1 = pad_sequence(batch_encoder_input_ids_1, batch_first=True, padding_value=self.pad_token_id)
+        batch_encoder_input_ids_2 = pad_sequence(batch_encoder_input_ids_2, batch_first=True,padding_value=self.pad_token_id)
+        batch_span_label_ids = pad_sequence(batch_span_label_ids, batch_first=True, padding_value=self.pad_token_id)
+        batch_belief_label_ids = pad_sequence(batch_belief_label_ids, batch_first=True, padding_value=self.pad_token_id)
+        batch_resp_label_ids = pad_sequence(batch_resp_label_ids, batch_first=True, padding_value=self.pad_token_id)
+        return (batch_encoder_input_ids_1,batch_encoder_input_ids_2), batch_span_label_ids, batch_belief_label_ids, batch_resp_label_ids
 
 class BaseIterator(object):
     def __init__(self, reader):
@@ -279,7 +536,7 @@ class MultiWOZIterator(BaseIterator):
                     encoder_input_ids_1 = context + turn["user"]+ [self.reader.eos_token_id]
                     #修改4/26
                     encoder_input_ids_2 = context + turn["user"] + turn["dbpn"] + [self.reader.eos_token_id]
-                    print(self.reader.tokenizer.decode(encoder_input_ids_2))
+                    #print(self.reader.tokenizer.decode(encoder_input_ids_2))
                     # add current span of user utterance
                     for domain, ss_dict in turn["user_span"].items():
                         for s, span in ss_dict.items():

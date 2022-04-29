@@ -16,17 +16,21 @@ import numpy as np
 import pickle as pkl
 import warnings
 import torch
+import torch.nn as nn
 from torch.nn.utils.rnn import pad_sequence
+from torch.utils.data import DataLoader, sampler
+from torch.utils.data.distributed import DistributedSampler
 from transformers import AdamW, get_linear_schedule_with_warmup, get_constant_schedule
 from transformers.modeling_outputs import BaseModelOutput
 from tensorboardX import SummaryWriter
 from utils.io_utils import load_json,save_json
 from model import T5WithSpan, T5WithTokenSpan
-from reader import MultiWOZIterator, MultiWOZReader
+from reader import MultiWOZIterator, MultiWOZReader,MultiWOZDataset, SequentialDistributedSampler, CollatorTrain
 from evaluator import MultiWozEvaluator
 from nltk import word_tokenize
 from utils import definitions
 from utils.io_utils import get_or_create_logger, load_json, save_json
+from utils.ddp_utils import reduce_mean, reduce_sum
 import eval_chitchat
 from external_knowledges import MultiWozDB
 import argparse
@@ -161,7 +165,6 @@ class BaseRunner(metaclass=ABCMeta):
         self.reader = reader
         self.model = self.load_model()
 
-    #从ckpt load模型
     def load_model(self):
         if self.cfg.ckpt is not None:
             model_path = self.cfg.ckpt
@@ -191,7 +194,10 @@ class BaseRunner(metaclass=ABCMeta):
 
         model.to(self.cfg.device)
 
+        if self.cfg.num_gpus > 1:
+            model=nn.parallel.DistributedDataParallel(model,device_ids=[self.cfg.local_rank], output_device=self.cfg.local_rank)
 
+        model.to(self.cfg.device)
 
         return model
 
@@ -368,24 +374,6 @@ class MultiWOZRunner(BaseRunner):
         if self.cfg.task == "e2e" and self.cfg.resp_loss_coeff > 0:
             loss += (self.cfg.resp_loss_coeff * resp_loss)
 
-        #todo: dp
-        if self.cfg.num_gpus > 1:
-            loss = loss.sum()
-            belief_loss = belief_loss.sum()
-            num_belief_correct = num_belief_correct.sum()
-            num_belief_count = num_belief_count.sum()
-
-            if self.cfg.add_auxiliary_task:
-                span_loss = span_loss.sum()
-                num_span_correct = num_span_correct.sum()
-                num_span_count = num_span_count.sum()
-
-            if self.cfg.task == "e2e":
-                resp_loss = resp_loss.sum()
-                num_resp_correct = num_resp_correct.sum()
-                num_resp_count = num_resp_count.sum()
-
-
         step_outputs = {"belief": {"loss": belief_loss.item(),
                                    "correct": num_belief_correct.item(),
                                    "count": num_belief_count.item()}}
@@ -402,7 +390,101 @@ class MultiWOZRunner(BaseRunner):
 
         return loss, step_outputs
 
-    def train_epoch(self, train_iterator, optimizer, scheduler, reporter=None):
+    def reduce_ddp_stepoutpus(self, step_outputs):
+        step_outputs_all = {"belief": {"loss": reduce_mean(step_outputs['belief']['loss']),
+                            "correct": reduce_sum(step_outputs['belief']['correct']),
+                            "count": reduce_sum(step_outputs['belief']['count'])}}
+
+        if self.cfg.add_auxiliary_task:
+            step_outputs_all['span'] = {
+                'loss': reduce_mean(step_outputs['span']['loss']),
+                "correct": reduce_sum(step_outputs['span']['correct']),
+                "count": reduce_sum(step_outputs['span']['count'])
+            }
+
+        if self.cfg.task == "e2e":
+            step_outputs_all["resp"] = {
+                'loss': reduce_mean(step_outputs['resp']['loss']),
+                "correct": reduce_sum(step_outputs['resp']['correct']),
+                "count": reduce_sum(step_outputs['resp']['count'])
+            }
+
+        return step_outputs_all
+
+    def train_epoch(self, data_loader, optimizer, scheduler, reporter=None):
+        self.model.train()
+        self.model.zero_grad()
+        epoch_step, train_loss = 0, 0.
+        for batch in iter(data_loader):
+            start_time = time.time()
+
+            inputs, span_labels, belief_labels, resp_labels = batch
+
+            loss, step_outputs = self.step_fn(inputs, span_labels, belief_labels, resp_labels)
+
+            if self.cfg.grad_accum_steps > 1:
+                loss = loss / self.cfg.grad_accum_steps
+
+            loss.backward()
+            train_loss += loss.item()
+
+            torch.nn.utils.clip_grad_norm_(
+                self.model.parameters(), self.cfg.max_grad_norm)
+
+            if (epoch_step + 1) % self.cfg.grad_accum_steps == 0:
+                optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad()
+
+                lr = scheduler.get_last_lr()[0]
+
+                if reporter is not None:
+                    reporter.step(start_time, lr, step_outputs)
+
+            epoch_step += 1
+
+        return train_loss
+
+    def train(self):
+        train_dataset = MultiWOZDataset(self.reader, 'train', self.cfg.task, self.cfg.ururu,
+                                        context_size=self.cfg.context_size, num_dialogs=self.cfg.num_train_dialogs,
+                                        excluded_domains=self.cfg.excluded_domains)
+
+        if self.cfg.num_gpus > 1:
+            train_sampler = DistributedSampler(train_dataset)
+        else:
+            train_sampler = sampler(train_dataset)
+
+        train_collator = CollatorTrain(self.reader.pad_token_id, self.reader.tokenizer)
+        train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=self.cfg.batch_size_per_gpu,
+                                      collate_fn=train_collator)
+        num_training_steps_per_epoch = len(train_dataloader)
+        optimizer, scheduler = self.get_optimizer_and_scheduler(
+            num_training_steps_per_epoch, self.cfg.batch_size_per_gpu)
+
+        reporter = Reporter(self.cfg.log_frequency, self.cfg.model_dir)
+
+
+
+        for epoch in range(1, self.cfg.epochs + 1):
+            train_dataloader.sampler.set_epoch(epoch)
+
+            train_loss = self.train_epoch(train_dataloader, optimizer, scheduler, reporter)
+
+            if self.cfg.num_gpus > 1:
+                torch.distributed.barrier()
+
+            logger.info("done {}/{} epoch, train loss is:{:f}".format(epoch, self.cfg.epochs, train_loss))
+
+            # if not self.cfg.no_validation:
+            #     self.validation(reporter.global_step)
+            if self.cfg.local_rank in [0, -1]:
+                self.save_model(epoch)
+
+            if self.cfg.num_gpus > 1:
+                torch.distributed.barrier()
+
+    def _train_epoch(self, train_iterator, optimizer, scheduler, reporter=None):
         self.model.train()
         self.model.zero_grad()
 
@@ -433,7 +515,7 @@ class MultiWOZRunner(BaseRunner):
                 if reporter is not None:
                     reporter.step(start_time, lr, step_outputs)
 
-    def train(self):
+    def _train(self):
         train_batches, num_training_steps_per_epoch, _, _ = self.iterator.get_batches(
             "train", self.cfg.batch_size, self.cfg.num_gpus, shuffle=True,
             num_dialogs=self.cfg.num_train_dialogs, excluded_domains=self.cfg.excluded_domains)
@@ -456,7 +538,7 @@ class MultiWOZRunner(BaseRunner):
             if not self.cfg.no_validation:
                 self.validation(reporter.global_step)
 
-    def validation(self, global_step):
+    def _validation(self, global_step):
         self.model.eval()
 
         dev_batches, num_steps, _, _ = self.iterator.get_batches(
@@ -1098,7 +1180,7 @@ class MultiWOZRunner(BaseRunner):
 
             result = self.iterator.get_readable_batch(dial_batch)
             results.update(**result)
-            '''
+
             evaluator = MultiWozEvaluator(self.reader, self.cfg.pred_data_type)
             bleu, success, match = evaluator.e2e_eval(
                 results, eval_dial_list=eval_dial_list, add_auxiliary_task=self.cfg.add_auxiliary_task)
@@ -1107,10 +1189,10 @@ class MultiWOZRunner(BaseRunner):
 
             logger.info('match: %2.2f; success: %2.2f; bleu: %2.2f; score: %.2f' % (
                 match, success, bleu, score))
-            '''
+
         if self.cfg.output:
             save_json(results, os.path.join(self.cfg.ckpt, self.cfg.output))
-            '''
+
             evaluator = MultiWozEvaluator(self.reader, self.cfg.pred_data_type)
             bleu, success, match = evaluator.e2e_eval(
                 results, eval_dial_list=eval_dial_list, add_auxiliary_task=self.cfg.add_auxiliary_task)
@@ -1119,7 +1201,7 @@ class MultiWOZRunner(BaseRunner):
 
             logger.info('match: %2.2f; success: %2.2f; bleu: %2.2f; score: %.2f' % (
                 match, success, bleu, score))
-            '''
+
         '''
         evaluator = eval_chitchat.CC_evaluator(self.reader)
         print(evaluator.bleu(results))

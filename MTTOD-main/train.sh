@@ -1,12 +1,16 @@
-#3090
-CUDA_VISIBLE_DEVICES=3 python main.py\
-    -version 2.0\
-    -data_type MUL\
-    -num_gpus 1\
+
+CUDA_VISIBLE_DEVICES=4,5,6,7 python -m torch.distributed.launch \
+    --master_port 8888 \
+    --nproc_per_node=4\
+    --nnodes=1 \
+    --node_rank=0 \
+    main.py \
+    -data_type TOD\
+    -version 2.0 \
+    -num_gpus 4\
     -run_type train\
-    -batch_size 4\
-    -model_dir MUL_bsz4_ng1_aat_5e-4_5epoch_426_2\
+    -batch_size_per_gpu 4\
+    -model_dir testddp_tod\
     -epochs 5\
-    -seed 42\
-    -add_auxiliary_task\
-    -learning_rate 5e-4
+    -seed 42 \
+    -learning_rate 2e-3
