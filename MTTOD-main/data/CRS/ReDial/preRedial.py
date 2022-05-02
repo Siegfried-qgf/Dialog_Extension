@@ -306,6 +306,14 @@ class dataset(object):
                     if word not in entities_set:
                         entities.append(word)
                         entities_set.add(word)
+
+            elif context_dict['user'] == re_id and len(contexts)== 0:
+                for word in context_dict['entity']:
+                    if word not in entities_set:
+                        entities.append(word)
+                        entities_set.add(word)
+                cases.append({'movielist': movielist, 'contexts':["hi !"] , 'response': context_dict['sentence'],'entity': deepcopy(entities), 'movie': 0,'rec': 0})
+
             else:
                 contexts.append(context_dict['sentence'])
                 for word in context_dict['entity']:
@@ -371,13 +379,20 @@ class dataset(object):
                     dict["resp"] = resp_tihuan
                     #print(dict["user"])
                     #print(dict["resp"])
-
+                    dict["turn_num"] = i
                     dict["nodelx_resp"]=turns[i]['response']
                     dict["pointer"] = "[db_recommend] "
-                    if movie_rec_list[count]:
-                        for j in range(len(movie_rec_list[count])):
-                            dict["pointer"]+=movie_rec_list[count][j]+" "
-                    count=count+1
+
+                    if dict["user"] == "hi ! " and dict["turn_num"] == 0:
+                        print("here")
+                    else:
+                        if movie_rec_list[count]:
+                            for j in range(len(movie_rec_list[count])):
+                                dict["pointer"] += movie_rec_list[count][j] + " "
+                        count = count + 1
+
+
+
                     dict["match"] = turns[i]['movie']
                     dict["constraint"] = "[recommend] "
                     if turns[i]["rec"] == 0:
@@ -399,12 +414,13 @@ class dataset(object):
                         dict["sys_act"] = "[recommend] [recommend_act] recommend"
                     else:
                         dict["sys_act"] = "[recommend] [recommend_chit] chit"
-                    dict["turn_num"] = i
+
                     dict["turn_domain"] = "[recommend]"
                     log.append(dict)
                     #print(dict)
                 it['goal']={}
                 it["log"]=log
+                print(count-1)
             #print({id:it})
             data_m.update({id:it})
         return data_m
@@ -453,13 +469,13 @@ class CRSdataset(Dataset):
 
 
 if __name__ == '__main__':
-    '''
+
     ds = dataset('train_data.jsonl')
     save_json(ds.trans(ds.data,True),"./train_CRS.json")
     '''
     ds=dataset("test_data.jsonl")
     save_json(ds.trans(ds.data, False), "./test_CRS.json")
-
+    '''
 
 
 

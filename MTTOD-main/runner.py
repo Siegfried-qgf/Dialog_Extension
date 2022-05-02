@@ -1014,6 +1014,7 @@ class MultiWOZRunner(BaseRunner):
                                     top10_str = ""
                                     for item in top10:
                                         top10_str += item + " "
+                                    top10_str=top10_str.lower()
                                     db_token = "[db_recommend] " + top10_str
                                 else:
                                     db_token = "[db_recommend] "
@@ -1027,7 +1028,7 @@ class MultiWOZRunner(BaseRunner):
                             context, _ = self.iterator.flatten_dial_history(
                                 dial_history[t], [], (len(turn["user"])+len(turn["dbpn_gen"])), self.cfg.context_size)
                             # 4/20
-                            encoder_input_ids_2 = context + turn["user"] + turn["dbpn"]+ [self.reader.eos_token_id]
+                            encoder_input_ids_2 = context + turn["user"] + turn["dbpn_gen"]+ [self.reader.eos_token_id]
                             batch_encoder_input_ids_2.append(self.iterator.tensorize(encoder_input_ids_2))
                         batch_encoder_input_ids_2 = pad_sequence(batch_encoder_input_ids_2,
                                                                      batch_first=True,
@@ -1180,7 +1181,7 @@ class MultiWOZRunner(BaseRunner):
 
             result = self.iterator.get_readable_batch(dial_batch)
             results.update(**result)
-
+            '''
             evaluator = MultiWozEvaluator(self.reader, self.cfg.pred_data_type)
             bleu, success, match = evaluator.e2e_eval(
                 results, eval_dial_list=eval_dial_list, add_auxiliary_task=self.cfg.add_auxiliary_task)
@@ -1189,10 +1190,10 @@ class MultiWOZRunner(BaseRunner):
 
             logger.info('match: %2.2f; success: %2.2f; bleu: %2.2f; score: %.2f' % (
                 match, success, bleu, score))
-
+            '''
         if self.cfg.output:
             save_json(results, os.path.join(self.cfg.ckpt, self.cfg.output))
-
+            '''
             evaluator = MultiWozEvaluator(self.reader, self.cfg.pred_data_type)
             bleu, success, match = evaluator.e2e_eval(
                 results, eval_dial_list=eval_dial_list, add_auxiliary_task=self.cfg.add_auxiliary_task)
@@ -1201,6 +1202,7 @@ class MultiWOZRunner(BaseRunner):
 
             logger.info('match: %2.2f; success: %2.2f; bleu: %2.2f; score: %.2f' % (
                 match, success, bleu, score))
+                '''
 
         '''
         evaluator = eval_chitchat.CC_evaluator(self.reader)
