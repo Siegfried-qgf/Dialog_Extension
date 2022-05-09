@@ -472,7 +472,7 @@ class MultiWOZIterator(BaseIterator):
     def get_readable_batch(self, dial_batch):
         dialogs = {}
 
-        decoded_keys = ["user","usdx", "resp", "redx", "bspn", "aspn", "dbpn",
+        decoded_keys = ["user","usdx","resp","redx", "bspn", "aspn", "dbpn",
                         "bspn_gen", "bspn_gen_with_span",
                         "dbpn_gen", "aspn_gen", "resp_gen"]
         for dial in dial_batch:
@@ -822,7 +822,7 @@ class MultiWOZReader(BaseReader):
         self.db = MultiWozDB(os.path.join("data", "MultiWOZ_{}".format(self.version), "db"))
         #todo maxlength
         super(MultiWOZReader, self).__init__(backbone,cfg)
-        self.tokenizer.model_max_length = 1800
+        self.tokenizer.model_max_length = 1600
 
     def get_data_dir(self):
         print(self.cfg.data_type)

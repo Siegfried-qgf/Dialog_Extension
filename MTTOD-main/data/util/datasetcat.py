@@ -20,9 +20,9 @@ def cat_data(data1,data2,data3,data4):
     data1.update(data3)
     data1.update(data4)
     print(len(data1))
-    save_json(data1,"./../multi_data/train_MUL.json")
+    save_json(data1,"./../multi_data/test_MUL.json")
 
-cat_data(path_woz+'train_TOD.json',path_qa+'train_QA.json',path_cc+"train_CC.json",path_recommend+"train_CRS.json")
+cat_data(path_woz+'test_TOD.json',path_qa+'test_QA.json',path_cc+"test_CC.json",path_recommend+"test_CRS.json")
 
 '''
 def cat_data2(data1,data2):

@@ -1,5 +1,5 @@
 '''
-written by qgf 2022/4/22
+written by qgf 2022/5/6
 '''
 import os
 import spacy
@@ -46,37 +46,75 @@ import pickle as pkl
             "resp_gen": "<bos_resp> i have n't seen either of those . i would recommend batman_(1989_film_series) and thor: ragnarok (2017) . i have n't seen either of those . <eos_resp>"
         },
 '''
-entity2entityid = pkl.load(open("./data/CRS/ReDial/entity2entityId.pkl", "rb"))
-
-def id2movie(v):
-    for key, value in entity2entityid.items():
-        if value == v:
-            return key[29:-1]
-    return ""
-
-def recall(data):
+def accuracycc(data):
     count=0
-    recall_1=0
+    recall=0
     for dial_id, dial in tqdm.tqdm(data.items()):
         for turn in dial:
-            if turn["match"]:
-                count=count+1
-                gold=id2movie(turn["match"])
-                gold=gold.lower()
-                if gold=="":
-                    continue
-                if gold in turn["resp_gen"]:
-                    recall_1=recall_1+1
-    print("匹配到的 "+str(recall_1))
+            count = count + 1
+            if "[chit]" in turn["bspn_gen"]:
+                recall=recall+1
+            else:
+                print(dial_id)
+    print("匹配到的 "+str(recall))
     print("总数 "+str(count))
-    return recall_1/count
+    return recall/count
 
-crs=load_json("./MUL_5.6/ckpt-epoch5/CRS_goal")
-print(recall(crs))
+def accuracyqa(data):
+    count = 0
+    recall = 0
+    for dial_id, dial in tqdm.tqdm(data.items()):
+        for turn in dial:
+            count = count + 1
+            if "[answer]" in turn["bspn_gen"]:
+                recall = recall + 1
+            else:
+                print(dial_id)
+    print("匹配到的 " + str(recall))
+    print("总数 " + str(count))
+    return recall / count
 
+def accuracytod(data):
+    count = 0
+    recall = 0
+    for dial_id, dial in tqdm.tqdm(data.items()):
+        for turn in dial:
+            count = count + 1
+            recall = recall + 1
+            if "[answer]" in turn["bspn_gen"]:
+                recall = recall-1
+            elif "[chit]" in turn["bspn_gen"]:
+                recall = recall - 1
+            elif "[recommend]" in turn["bspn_gen"]:
+                recall = recall - 1
+            elif turn["bspn_gen"]=="<bos_belief> <eos_belief>":
+                print(dial_id)
+                recall = recall - 1
+    print("匹配到的 " + str(recall))
+    print("总数 " + str(count))
+    return recall / count
 
+def accuracycrs(data):
+    count = 0
+    recall = 0
+    for dial_id, dial in tqdm.tqdm(data.items()):
+        for turn in dial:
+            count = count + 1
+            recall = recall + 1
+            if "[answer]" in turn["bspn_gen"]:
+                recall = recall-1
+            elif "[chit]" in turn["bspn_gen"]:
+                recall = recall - 1
+            elif turn["bspn_gen"]=="<bos_belief> <eos_belief>":
+                if "[recommend]" not in turn["aspn_gen"]:
+                    recall=recall-1
+                    print(dial_id)
+    print("匹配到的 " + str(recall))
+    print("总数 " + str(count))
+    return recall / count
 
-
-
-
-
+cc=load_json("./MUL_5.6/ckpt-epoch5/CC")
+qa=load_json("./MUL_5.6/ckpt-epoch5/QA")
+tod=load_json("./MUL_5.6/ckpt-epoch5/TOD")
+crs=load_json("./MUL_5.6/ckpt-epoch5/CRS")
+print(accuracycrs(crs))

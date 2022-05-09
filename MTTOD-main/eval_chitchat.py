@@ -23,8 +23,6 @@ nlp = spacy.load('en_core_web_sm')
 class CC_evaluator(object):
     def __init__(self, reader):
         self.reader = reader
-        self.gold_data = load_json(
-            os.path.join("data/chit_chat/FusedChat","test_CC.json"))
     '''
     'sng01270_cc': [{'turn_num': 0, 'turn_domain': ['[chit]'], 'pointer': '',
                      'user': "<bos_user> people don't usually drive in singapore. <eos_user>",

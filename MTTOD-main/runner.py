@@ -979,7 +979,7 @@ class MultiWOZRunner(BaseRunner):
 
                 for t, turn in enumerate(turn_batch):
                     turn.update(**decoded_belief_outputs[t])
-
+                    #turn["bspn_gen"]=turn["bspn"]
                     #print(str(t)+ " "+self.reader.tokenizer.decode(turn["user"]))
                     #print(str(t)+ " "+self.reader.tokenizer.decode(turn["bspn_gen"]))
 
@@ -995,10 +995,13 @@ class MultiWOZRunner(BaseRunner):
                             dbpn.append(turn["dbpn"])
                     else:
                         for i,turn in enumerate(turn_batch):
+
                             if self.cfg.add_auxiliary_task:
                                 bspn_gen = turn["bspn_gen_with_span"]
                             else:
                                 bspn_gen = turn["bspn_gen"]
+
+                            #bspn_gen = turn["bspn"]
 
                             bspn_gen = self.reader.tokenizer.decode(
                                 bspn_gen, clean_up_tokenization_spaces=False)
@@ -1187,7 +1190,7 @@ class MultiWOZRunner(BaseRunner):
                 results, eval_dial_list=eval_dial_list, add_auxiliary_task=self.cfg.add_auxiliary_task)
 
             score = 0.5 * (success + match) + bleu
-
+            
             logger.info('match: %2.2f; success: %2.2f; bleu: %2.2f; score: %.2f' % (
                 match, success, bleu, score))
             '''
@@ -1202,13 +1205,16 @@ class MultiWOZRunner(BaseRunner):
 
             logger.info('match: %2.2f; success: %2.2f; bleu: %2.2f; score: %.2f' % (
                 match, success, bleu, score))
-                '''
+            '''
+
 
         '''
         evaluator = eval_chitchat.CC_evaluator(self.reader)
         print(evaluator.bleu(results))
         print(evaluator.dist(results))
         '''
+
+
 
 
 
