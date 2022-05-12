@@ -10,8 +10,6 @@ import sys
 
 from collections import Counter, OrderedDict
 
-OPTS = None
-
 out_domain = ["reddit", "science"]
 in_domain = ["mctest", "gutenberg", "race", "cnn", "wikipedia"]
 domain_mappings = {"mctest":"children_stories", "gutenberg":"literature", "race":"mid-high_school", "cnn":"news", "wikipedia":"wikipedia", "science":"science", "reddit":"reddit"}
@@ -21,6 +19,7 @@ class CoQAEvaluator():
 
     def __init__(self, gold_file):
         self.gold_data, self.id_to_source = CoQAEvaluator.gold_answers_to_dict(gold_file)
+
 
     @staticmethod
     def gold_answers_to_dict(gold_file):
@@ -220,7 +219,7 @@ class CoQAEvaluator():
                              'turns': turn_count}
 
         return scores
-
+'''
 def parse_args():
     parser = argparse.ArgumentParser('Official evaluation script for CoQA.')
     parser.add_argument('--data-file', dest="data_file", help='Input data JSON file.')
@@ -233,18 +232,12 @@ def parse_args():
         parser.print_help()
         sys.exit(1)
     return parser.parse_args()
+'''
+def eval_qa(data_file,pred_file):
+    evaluator = CoQAEvaluator(data_file)
+    with open(pred_file) as f:
+        pred_data = CoQAEvaluator.preds_to_dict(pred_file)
+    return evaluator.model_performance(pred_data)["overall"]["f1"]
 
-def main():
-    evaluator = CoQAEvaluator(OPTS.data_file)
 
-    if OPTS.human:
-        print(json.dumps(evaluator.human_performance(), indent=2))
 
-    if OPTS.pred_file:
-        with open(OPTS.pred_file) as f:
-            pred_data = CoQAEvaluator.preds_to_dict(OPTS.pred_file)
-        print(json.dumps(evaluator.model_performance(pred_data), indent=2))
-
-if __name__ == '__main__':
-    OPTS = parse_args()
-    main()

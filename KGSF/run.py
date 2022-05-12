@@ -272,7 +272,11 @@ class TrainLoop_fusion_rec():
     def id2movie(self,v):
         for key, value in self.entity2entityid.items():
             if value == v:
-                return key[29:-1]
+                print(key)
+                if type(key)== str:
+                    return key[29:-1]
+                else:
+                    warnings.warn("key应为str" + str(value))
         warnings.warn("没有对应电影"+str(value))
         return ""
 

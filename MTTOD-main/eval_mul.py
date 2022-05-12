@@ -46,6 +46,7 @@ import pickle as pkl
             "resp_gen": "<bos_resp> i have n't seen either of those . i would recommend batman_(1989_film_series) and thor: ragnarok (2017) . i have n't seen either of those . <eos_resp>"
         },
 '''
+action=["[attraction]" ,"[hotel]" ,"[restaurant]" , "[taxi]" , "[train]" , "[hospital]" ,"[police]","[general]"]
 def accuracycc(data):
     count=0
     recall=0
@@ -113,8 +114,68 @@ def accuracycrs(data):
     print("总数 " + str(count))
     return recall / count
 
+def accuracymul(data,type1,type2):
+    count = 0
+    recall = 0
+    neg=0
+    for dial_id, dial in tqdm.tqdm(data.items()):
+        count=count+1
+        for turn in dial:
+            if type2=="CC":
+                if turn["turn_domain"][0]=="[chit]":
+                    if "[chit_act]" in turn["aspn_gen"]:
+                        #print(turn["aspn_gen"]+dial_id)
+                        recall+=1
+                        break
+                    else:
+                        print(turn["aspn_gen"]+dial_id)
+                        neg+=1
+                        break
+            if type2=="TOD":
+                if turn["turn_domain"][0] == "[attraction]" or turn["turn_domain"][0] =="[hotel]" or turn["turn_domain"][0] =="[restaurant]" or turn["turn_domain"][0] =="[taxi]" or turn["turn_domain"][0] =="[train]" or turn["turn_domain"][0] =="[hospital]" or turn["turn_domain"][0] =="[police]":
+                    for act in action:
+                        if act in turn["aspn_gen"]:
+                            recall+=1
+                            print(turn["aspn_gen"]+" " +dial_id)
+                    break
+            if type2=="QA":
+                if turn["turn_domain"][0] == "[answer]":
+                    if "[answer]" in turn["aspn_gen"]:
+                        print(turn["aspn_gen"]+" "+dial_id)
+                        recall+=1
+                        break
+                    else:
+                        print(turn["aspn_gen"]+" "+dial_id)
+                        neg+=1
+                        break
+            if type2=="CRS":
+                if turn["turn_domain"][0] == "[recommend]":
+                    if "[recommend]" in turn["aspn_gen"]:
+                        #print(turn["aspn_gen"]+" "+dial_id)
+                        recall+=1
+                        break
+                    else:
+                        print(turn["aspn_gen"]+" "+dial_id)
+                        neg+=1
+                        break
+    print("匹配到的 " + str(recall))
+    print("总数 " + str(count))
+    print("neg"+str(neg))
+    return recall / count
 cc=load_json("./MUL_5.6/ckpt-epoch5/CC")
 qa=load_json("./MUL_5.6/ckpt-epoch5/QA")
 tod=load_json("./MUL_5.6/ckpt-epoch5/TOD")
 crs=load_json("./MUL_5.6/ckpt-epoch5/CRS")
-print(accuracycrs(crs))
+tod_cc=load_json("./MUL_5.6/ckpt-epoch5/tod_cc")
+cc_tod=load_json("./MUL_5.6/ckpt-epoch5/cc_tod")
+qa_tod=load_json("./MUL_5.6/ckpt-epoch5/qa_tod")
+tod_qa=load_json("./MUL_5.6/ckpt-epoch5/tod_qa")
+crs_tod=load_json("./MUL_5.6/ckpt-epoch5/crs_tod")
+tod_crs=load_json("./MUL_5.6/ckpt-epoch5/tod_crs")
+cc_qa=load_json("./MUL_5.6/ckpt-epoch5/cc_qa")
+qa_cc=load_json("./MUL_5.6/ckpt-epoch5/qa_cc")
+cc_crs=load_json("./MUL_5.6/ckpt-epoch5/cc_crs")
+crs_cc=load_json("./MUL_5.6/ckpt-epoch5/crs_cc")
+qa_crs=load_json("./MUL_5.6/ckpt-epoch5/qa_crs")
+crs_qa=load_json("./MUL_5.6/ckpt-epoch5/crs_qa")
+accuracymul(crs_qa,"CRS","QA")

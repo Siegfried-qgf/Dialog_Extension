@@ -1,12 +1,17 @@
 '''
 by qgf 2022/3/18
 '''
+import copy
 import json
 import sys
 sys.path.append("./../..")
 from utils.io_utils import load_json,save_json
 from transformers import T5Tokenizer
 tok=T5Tokenizer.from_pretrained("t5-base")
+import spacy
+import tqdm
+nlp=spacy.load('en_core_web_sm')
+import spacy
 def trans(path):
     data_m={}
     data=load_json(path)
@@ -28,6 +33,12 @@ def trans(path):
         dict["nodelx_resp"] = "OK, let me see?"
         dict["pointer"] = "0,0,0,0,0,0"
         dict["match"] = ""
+        user=copy.deepcopy(dict["user"])
+        print(user)
+        user=nlp(user)
+        for entity in user.ents:
+            print(entity, entity.label_, entity.label)
+        input()
         dict["constraint"] = "[answer] [value_document] answer"
         dict["cons_delex"] = "[answer] [value_document]"
         dict["sys_act"] = "[answer] [document_act] answer"

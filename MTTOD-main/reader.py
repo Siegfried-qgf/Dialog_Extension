@@ -822,7 +822,7 @@ class MultiWOZReader(BaseReader):
         self.db = MultiWozDB(os.path.join("data", "MultiWOZ_{}".format(self.version), "db"))
         #todo maxlength
         super(MultiWOZReader, self).__init__(backbone,cfg)
-        self.tokenizer.model_max_length = 1600
+        self.tokenizer.model_max_length = 1800
 
     def get_data_dir(self):
         print(self.cfg.data_type)
@@ -834,19 +834,31 @@ class MultiWOZReader(BaseReader):
             return os.path.join("data", "CQA")
         elif self.cfg.data_type=="CRS":
             return os.path.join("data", "CRS","ReDial")
-        else:
+        elif self.cfg.data_type=="MUL":
             return os.path.join("data", "multi_data")
+        else:
+            return os.path.join("data","multi_scene")
 
     def encode_data(self, data_type):
         vocab = self.tokenizer.get_vocab()
         j = save_json(vocab, './vocab.json')
         #todo dir
+
         if data_type=="train":
-            data = load_json(self.get_data_dir()+"/train_{}.json".format(self.cfg.data_type))
+            if self.cfg.tran_type:
+                data = load_json(self.get_data_dir() + "/" + self.cfg.tran_type + ".json")
+            else:
+                data = load_json(self.get_data_dir()+"/train_{}.json".format(self.cfg.data_type))
         elif data_type=="dev":
-            data = load_json(self.get_data_dir()+"/dev_{}.json".format(self.cfg.data_type))
+            if self.cfg.tran_type:
+                data = load_json(self.get_data_dir() + "/" + self.cfg.tran_type + ".json")
+            else:
+                data = load_json(self.get_data_dir()+"/dev_{}.json".format(self.cfg.data_type))
         else:
-            data = load_json(self.get_data_dir()+"/test_{}.json".format(self.cfg.data_type))
+            if self.cfg.tran_type:
+                data= load_json(self.get_data_dir()+"/"+self.cfg.tran_type+".json")
+            else:
+                data = load_json(self.get_data_dir()+"/test_{}.json".format(self.cfg.data_type))
 
         encoded_data = []
         for fn, dial in tqdm(data.items(), desc=data_type, total=len(data)):

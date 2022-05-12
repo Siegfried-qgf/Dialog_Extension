@@ -21,12 +21,12 @@ REQUESTABLE_SLOTS = {
     "restaurant": ["phone", "postcode", "address", "pricerange", "food", "area", "reference"],
     #扩充
     'answer':['document','question'],
-    'chit':['chit_act'],
+    'chit':['verb',"noun"],
     'recommend':["recommend_chit","entity"]
 }
 #扩充
 ALL_REQSLOT = ["car", "address", "postcode", "phone", "internet", "parking", "type", "pricerange", "food",
-                      "stars", "area", "reference", "time", "leave", "price", "arrive", "id","document","question","chit_act","recommend_chit","entity"]
+                      "stars", "area", "reference", "time", "leave", "price", "arrive", "id","document","question","verb","noun","recommend_chit","entity"]
 
 INFORMABLE_SLOTS = {
     "taxi": ["leave", "destination", "departure", "arrive"],
@@ -38,12 +38,12 @@ INFORMABLE_SLOTS = {
     "restaurant": ["food", "pricerange", "area", "name", "time", "day", "people"],
     #扩充
     'answer':['document','question'],
-    'chit':['chit_act'],
+    'chit':['verb',"noun"],
     'recommend':["recommend_chit","entity"]
 }
 #扩充
 ALL_INFSLOT = ["type", "parking", "pricerange", "internet", "stay", "day", "people", "area", "stars", "name",
-               "leave", "destination", "departure", "arrive", "department", "food", "time","document","question","chit_act","recommend_chit","entity"]
+               "leave", "destination", "departure", "arrive", "department", "food", "time","document","question","verb","noun","recommend_chit","entity"]
 
 EXTRACTIVE_SLOT = ["leave", "arrive", "destination", "departure", "type", "name", "food"]
 

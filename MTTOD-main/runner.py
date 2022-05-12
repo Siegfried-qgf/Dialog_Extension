@@ -11,7 +11,6 @@ from tqdm import tqdm
 from collections import OrderedDict, defaultdict
 import sys
 sys.path.append("./..")
-#from KGSF import run
 import numpy as np
 import pickle as pkl
 import warnings
@@ -32,11 +31,10 @@ from utils import definitions
 from utils.io_utils import get_or_create_logger, load_json, save_json
 from utils.ddp_utils import reduce_mean, reduce_sum
 import eval_chitchat
-from external_knowledges import MultiWozDB
-import argparse
+import eval_CRS
+import eval_QA
 logger = get_or_create_logger(__name__)
 
-import random
 class Reporter(object):
     def __init__(self, log_frequency, model_dir):
         self.log_frequency = log_frequency
@@ -292,7 +290,8 @@ class MultiWOZRunner(BaseRunner):
          'learn_positional_embeddings': False, 'embeddings_scale': True, 'n_entity': 64368, 'n_relation': 214,
          'n_concept': 29308, 'n_con_relation': 48, 'dim': 128, 'n_hop': 2, 'kge_weight': 1, 'l2_weight': 2.5e-06,
          'n_memory': 32, 'item_update_mode': '0,1', 'using_all_hops': True, 'num_bases': 8}
-        if cfg.data_type=="CRS" and cfg.run_type=="predict":
+        if cfg.data_type=="CRS":
+        #if cfg.data_type=="MUL_T":
             from KGSF import run
             self.loop=run.TrainLoop_fusion_rec(opt,is_finetune=False)
             self.loop.model.load_model()
@@ -475,6 +474,7 @@ class MultiWOZRunner(BaseRunner):
                 torch.distributed.barrier()
 
             logger.info("done {}/{} epoch, train loss is:{:f}".format(epoch, self.cfg.epochs, train_loss))
+
 
             # if not self.cfg.no_validation:
             #     self.validation(reporter.global_step)
@@ -899,8 +899,8 @@ class MultiWOZRunner(BaseRunner):
             domain_history = [[] for _ in range(batch_size)]
 
             # 4/20 add user_history
-            if self.cfg.data_type =='CRS':
-                user_history=[[] for _ in range(batch_size)]
+
+            user_history=[[] for _ in range(batch_size)]
 
             constraint_dicts = [OrderedDict() for _ in range(batch_size)]
         #对同一turn的batch
@@ -914,7 +914,7 @@ class MultiWOZRunner(BaseRunner):
                     context, _ = self.iterator.flatten_dial_history(
                         dial_history[t], [], len(turn["user"]), self.cfg.context_size)
                     #4/20
-                    if self.cfg.data_type == 'CRS':
+                    if turn["turn_domain"][0]=="[recommend]":
                         user_history[t].append(self.reader.tokenizer.decode(turn["usdx"][1:-1]))
 
                     encoder_input_ids_1 = context + turn["user"] + [self.reader.eos_token_id]
@@ -1146,7 +1146,7 @@ class MultiWOZRunner(BaseRunner):
                 # update dial_history
                 for t, turn in enumerate(turn_batch):
                     pv_text = copy.copy(turn["user"])
-                    if self.cfg.data_type == 'CRS':
+                    if turn["turn_domain"][0]=="[recommend]":
 
                         user_history[t].append(self.reader.tokenizer.decode(turn["resp_gen"][1:-1]))
 
@@ -1184,35 +1184,38 @@ class MultiWOZRunner(BaseRunner):
 
             result = self.iterator.get_readable_batch(dial_batch)
             results.update(**result)
-            '''
-            evaluator = MultiWozEvaluator(self.reader, self.cfg.pred_data_type)
-            bleu, success, match = evaluator.e2e_eval(
-                results, eval_dial_list=eval_dial_list, add_auxiliary_task=self.cfg.add_auxiliary_task)
+            if self.cfg.data_type=="TOD":
+                evaluator = MultiWozEvaluator(self.reader, self.cfg.pred_data_type)
+                bleu, success, match = evaluator.e2e_eval(
+                    results, eval_dial_list=eval_dial_list, add_auxiliary_task=self.cfg.add_auxiliary_task)
+                score = 0.5 * (success + match) + bleu
+                logger.info('match: %2.2f; success: %2.2f; bleu: %2.2f; score: %.2f' % (match, success, bleu, score))
 
-            score = 0.5 * (success + match) + bleu
-            
-            logger.info('match: %2.2f; success: %2.2f; bleu: %2.2f; score: %.2f' % (
-                match, success, bleu, score))
-            '''
         if self.cfg.output:
             save_json(results, os.path.join(self.cfg.ckpt, self.cfg.output))
-            '''
-            evaluator = MultiWozEvaluator(self.reader, self.cfg.pred_data_type)
-            bleu, success, match = evaluator.e2e_eval(
-                results, eval_dial_list=eval_dial_list, add_auxiliary_task=self.cfg.add_auxiliary_task)
 
-            score = 0.5 * (success + match) + bleu
+        if self.cfg.data_type=="CC":
+            evaluator = eval_chitchat.CC_evaluator(self.reader)
+            bleu1,bleu2=evaluator.bleu(results)
+            dict1,dict2=evaluator.dist(results)
+            logger.info('bleu1: %.3f; bleu2: %.3f; dict1: %.3f; dict2: %.3f' % (bleu1, bleu2, dict1, dict2))
 
-            logger.info('match: %2.2f; success: %2.2f; bleu: %2.2f; score: %.2f' % (
-                match, success, bleu, score))
-            '''
+        if self.cfg.data_type=="QA":
+            rqa = []
+            for dial_id, dial in results.items():
+                for turn in dial:
+                    turn_dict = {}
+                    if turn['turn_num'] == 0:
+                        continue
+                    turn_dict['id'] = dial_id
+                    turn_dict["turn_id"] = turn['turn_num']
+                    turn_dict['answer'] = turn['resp_gen'][11:-11]
+                    rqa.append(turn_dict)
+            save_json(rqa, "./outqa.json")
+            logger.info('f1: %.1f' % eval_QA.eval_qa("./data/CQA/coqa-dev-v1.0.json","outqa.json"))
 
-
-        '''
-        evaluator = eval_chitchat.CC_evaluator(self.reader)
-        print(evaluator.bleu(results))
-        print(evaluator.dist(results))
-        '''
+        if self.cfg.data_type=="CRS":
+            logger.info('recall: %.3f' % eval_CRS(results))
 
 
 
