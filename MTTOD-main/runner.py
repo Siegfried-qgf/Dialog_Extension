@@ -28,7 +28,7 @@ from reader import MultiWOZIterator, MultiWOZReader,MultiWOZDataset, SequentialD
 from evaluator import MultiWozEvaluator
 from nltk import word_tokenize
 from utils import definitions
-from utils.io_utils import get_or_create_logger, load_json, save_json
+from utils.io_utils import get_or_create_logger, load_json, save_json ,gen_mask_with_prob
 from utils.ddp_utils import reduce_mean, reduce_sum
 import eval_chitchat
 import eval_CRS
@@ -463,8 +463,7 @@ class MultiWOZRunner(BaseRunner):
 
         reporter = Reporter(self.cfg.log_frequency, self.cfg.model_dir)
 
-
-
+        max_score = 0
         for epoch in range(1, self.cfg.epochs + 1):
             train_dataloader.sampler.set_epoch(epoch)
 
@@ -476,11 +475,19 @@ class MultiWOZRunner(BaseRunner):
             logger.info("done {}/{} epoch, train loss is:{:f}".format(epoch, self.cfg.epochs, train_loss))
 
 
-            # if not self.cfg.no_validation:
-            #     self.validation(reporter.global_step)
+            if self.cfg.save_best_model:
+                if self.cfg.local_rank == 0:
+                    current_score = self.predict()
+                    if max_score < current_score:
+                        max_score = current_score
+                        self.save_model(epoch)
+            else:
+                if self.cfg.local_rank in [0, -1]:
+                    self.save_model(epoch)
+            '''
             if self.cfg.local_rank in [0, -1]:
                 self.save_model(epoch)
-
+            '''
             if self.cfg.num_gpus > 1:
                 torch.distributed.barrier()
 
@@ -565,6 +572,23 @@ class MultiWOZRunner(BaseRunner):
         reporter.info_stats("dev", global_step, do_span_stats, do_resp_stats)
 
         torch.set_grad_enabled(True)
+
+    def search_subnet(self):
+        with open(os.path.join(self.cfg.ckpt, 'pytorch_model.bin'), "rb") as f:
+            state = torch.load(
+                f,
+                map_location=(
+                    lambda s, _: torch.serialization.default_restore_location(s, "cpu")
+                ),
+            )
+        mask_dict = gen_mask_with_prob(state, self.cfg.mask_prob, gen_part='all', random_gen=self.cfg.gen_random_mask,
+                                       include_embedding=self.cfg.include_embedding,
+                                       exclude_output_proj=self.cfg.exclude_output_proj)
+
+        mask_save_path = os.path.join(self.cfg.ckpt, 'subnet.pth')
+        torch.save(mask_dict, mask_save_path)
+
+        return mask_dict
 
     def finalize_bspn(self, belief_outputs, domain_history, constraint_history, span_outputs=None, input_ids=None):
         eos_token_id = self.reader.get_token_id(definitions.EOS_BELIEF_TOKEN)
@@ -885,9 +909,15 @@ class MultiWOZRunner(BaseRunner):
 
     def predict(self):
         self.model.eval()
+
+        if self.cfg.num_gpus > 1:
+            model = self.model.module
+        else:
+            model = self.model
+
         pred_batches, _, _, _ = self.iterator.get_batches(
-            self.cfg.pred_data_type, self.cfg.batch_size,
-            self.cfg.num_gpus, excluded_domains=self.cfg.excluded_domains)
+            self.cfg.pred_data_type, self.cfg.batch_size_per_gpu_eval,
+            1, excluded_domains=self.cfg.excluded_domains)
         early_stopping = True if self.cfg.beam_size > 1 else False
         eval_dial_list = None
         results = {}
@@ -938,7 +968,7 @@ class MultiWOZRunner(BaseRunner):
                 # belief tracking
                 #encoder
                 with torch.no_grad():
-                    encoder_outputs_1 = self.model(input_ids=batch_encoder_input_ids_1,
+                    encoder_outputs_1 = model(input_ids=batch_encoder_input_ids_1,
                                                  attention_mask=attention_mask,
                                                  return_dict=False,
                                                  encoder_only=True,
@@ -953,7 +983,7 @@ class MultiWOZRunner(BaseRunner):
                     encoder_outputs_1 = BaseModelOutput(
                         last_hidden_state=last_hidden_state)
                     # 生成belief_state
-                    belief_outputs = self.model.generate(encoder_outputs=encoder_outputs_1,
+                    belief_outputs = model.generate(encoder_outputs=encoder_outputs_1,
                                                          attention_mask=attention_mask,
                                                          eos_token_id=self.reader.eos_token_id,
                                                          max_length=200,
@@ -979,15 +1009,7 @@ class MultiWOZRunner(BaseRunner):
 
                 for t, turn in enumerate(turn_batch):
                     turn.update(**decoded_belief_outputs[t])
-                    #turn["bspn_gen"]=turn["bspn"]
-                    #print(str(t)+ " "+self.reader.tokenizer.decode(turn["user"]))
-                    #print(str(t)+ " "+self.reader.tokenizer.decode(turn["bspn_gen"]))
-
-
-
-                #DST完工了
-
-
+                #DST FINISHED
                 if self.cfg.task == "e2e":
                     dbpn = []
                     if self.cfg.use_true_dbpn:
@@ -1029,9 +1051,9 @@ class MultiWOZRunner(BaseRunner):
                         for t, turn in enumerate(turn_batch):
 
                             context, _ = self.iterator.flatten_dial_history(
-                                dial_history[t], [], (len(turn["user"])+len(turn["dbpn_gen"])), self.cfg.context_size)
+                                dial_history[t], [], (len(turn["user"])+len(turn["dbpn_gen"])+len(turn["bspn_gen"])), self.cfg.context_size)
                             # 4/20
-                            encoder_input_ids_2 = context + turn["user"] + turn["dbpn_gen"]+ [self.reader.eos_token_id]
+                            encoder_input_ids_2 = context + turn["user"] + turn["bspn_gen"]+turn["dbpn_gen"]+ [self.reader.eos_token_id]
                             batch_encoder_input_ids_2.append(self.iterator.tensorize(encoder_input_ids_2))
                         batch_encoder_input_ids_2 = pad_sequence(batch_encoder_input_ids_2,
                                                                      batch_first=True,
@@ -1063,7 +1085,7 @@ class MultiWOZRunner(BaseRunner):
                                 last_hidden_state=last_hidden_state[t].unsqueeze(0))
 
                             with torch.no_grad():
-                                resp_outputs = self.model.generate(
+                                resp_outputs = model.generate(
                                     encoder_outputs=encoder_outputs,
                                     attention_mask=attention_mask[t].unsqueeze(0),
                                     decoder_input_ids=resp_decoder_input_ids,
@@ -1095,7 +1117,7 @@ class MultiWOZRunner(BaseRunner):
                         resp_decoder_input_ids = resp_decoder_input_ids.to(self.cfg.device)
                         '''
                         with torch.no_grad():
-                            encoder_outputs_2 = self.model(input_ids=batch_encoder_input_ids_2,
+                            encoder_outputs_2 = model(input_ids=batch_encoder_input_ids_2,
                                                            attention_mask=attention_mask_2,
                                                            return_dict=False,
                                                            encoder_only=True,
@@ -1111,7 +1133,7 @@ class MultiWOZRunner(BaseRunner):
                                 last_hidden_state=last_hidden_state_2)
                         # response generation
                         with torch.no_grad():
-                            resp_outputs = self.model.generate(
+                            resp_outputs = model.generate(
                                 encoder_outputs=encoder_outputs_2,
                                 attention_mask=attention_mask_2,
                                 eos_token_id=self.reader.eos_token_id,
@@ -1136,10 +1158,11 @@ class MultiWOZRunner(BaseRunner):
                             '''
 
                             turn.update(**decoded_resp_outputs[t])
+                            #print(str(t) + " " + self.reader.tokenizer.decode(turn["bspn_gen"]))
                             #print(str(t) + " " + self.reader.tokenizer.decode(turn["dbpn_gen"]))
                             #print(str(t) + " " + self.reader.tokenizer.decode(turn["aspn_gen"]))
                             #print(str(t)+ " "+self.reader.tokenizer.decode(decoded_resp_outputs[t]["resp_gen"]))
-                            #print(self.reader.tokenizer.decode(turn["resp_gen"]))
+
                             #print(tihuan)
 
 
@@ -1194,12 +1217,14 @@ class MultiWOZRunner(BaseRunner):
         if self.cfg.output:
             save_json(results, os.path.join(self.cfg.ckpt, self.cfg.output))
 
-        if self.cfg.data_type=="CC":
+        if self.cfg.data_type=="CC_UB" or self.cfg.data_type=="CC_FU":
             evaluator = eval_chitchat.CC_evaluator(self.reader)
             bleu1,bleu2=evaluator.bleu(results)
             dict1,dict2=evaluator.dist(results)
             logger.info('bleu1: %.3f; bleu2: %.3f; dict1: %.3f; dict2: %.3f' % (bleu1, bleu2, dict1, dict2))
+            score=bleu1+bleu2+dict1+dict2
 
+        '''
         if self.cfg.data_type=="QA":
             rqa = []
             for dial_id, dial in results.items():
@@ -1212,11 +1237,27 @@ class MultiWOZRunner(BaseRunner):
                     turn_dict['answer'] = turn['resp_gen'][11:-11]
                     rqa.append(turn_dict)
             save_json(rqa, "./outqa.json")
-            logger.info('f1: %.1f' % eval_QA.eval_qa("./data/CQA/coqa-dev-v1.0.json","outqa.json"))
+            f1=eval_QA.eval_qa("./data/CQA/coqa-dev-v1.0.json", "outqa.json")
+            logger.info('f1: %.1f' % f1)
+            score = f1
+        '''
+
+        if self.cfg.data_type=="QA":
+            rqa = {}
+            for dial_id, dial in results.items():
+                for turn in dial:
+                    turn_dict={}
+                    if turn['turn_num']==0:
+                        continue
+                    rqa.update({turn["match"]:turn["resp_gen"][11:-11]})
+                    save_json(rqa, "./outqa.json")
 
         if self.cfg.data_type=="CRS":
-            logger.info('recall: %.3f' % eval_CRS(results))
+            recall=eval_CRS(results)
+            logger.info('recall: %.3f' % recall)
+            score=recall
 
+        return score
 
 
 

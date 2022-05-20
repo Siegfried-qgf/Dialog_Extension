@@ -106,6 +106,7 @@ class CoQAEvaluator():
     def _compute_turn_score(a_gold_list, a_pred):
         f1_sum = 0.0
         em_sum = 0.0
+
         if len(a_gold_list) > 1:
             for i in range(len(a_gold_list)):
                 # exclude the current answer
@@ -118,6 +119,11 @@ class CoQAEvaluator():
 
         return {'em': em_sum / max(1, len(a_gold_list)), 'f1': f1_sum / max(1, len(a_gold_list))}
 
+        '''
+        em_sum += CoQAEvaluator.compute_exact(a_gold_list[0], a_pred)
+        f1_sum += CoQAEvaluator.compute_f1(a_gold_list[0], a_pred)
+        return {'em': em_sum, 'f1': f1_sum}
+        '''
     def compute_turn_score(self, story_id, turn_id, a_pred):
         ''' This is the function what you are probably looking for. a_pred is the answer string your model predicted. '''
         key = (story_id, turn_id)
@@ -237,7 +243,9 @@ def eval_qa(data_file,pred_file):
     evaluator = CoQAEvaluator(data_file)
     with open(pred_file) as f:
         pred_data = CoQAEvaluator.preds_to_dict(pred_file)
-    return evaluator.model_performance(pred_data)["overall"]["f1"]
+        score=evaluator.model_performance(pred_data)["overall"]
+        print(score["em"],score["f1"])
+    return score["f1"]
 
 
 

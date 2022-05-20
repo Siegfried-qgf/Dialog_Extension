@@ -45,6 +45,7 @@ def add_config(parser):
     group = parser.add_argument_group("Training")
     group.add_argument("-batch_size", type=int, default=8)
     group.add_argument("-batch_size_per_gpu", type=int, default=8)
+    group.add_argument("-batch_size_per_gpu_eval", type=int, default=128)
     group.add_argument("-epochs", type=int, default=20)
     group.add_argument("-warmup_steps", type=int, default=-1)
     group.add_argument("-warmup_ratio", type=float, default=0.1)
@@ -85,10 +86,21 @@ def add_config(parser):
     group.add_argument("-ckpt", type=str, default=None)
     group.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
     group.add_argument("-log_frequency", type=int, default=100)
-    group.add_argument("-max_to_keep_ckpt", type=int, default=5)
+    group.add_argument("-max_to_keep_ckpt", type=int, default=10)
     group.add_argument("-num_gpus", type=int, default=1)
-    group.add_argument("-data_type", type=str, default="TOD", choices=['TOD', 'CC', 'QA', 'CRS', 'MUL',"MUL_T"])
+    group.add_argument("-data_type", type=str, default="TOD", choices=['TOD', 'CC_FU',"CC_UB",'QA', 'CRS', 'MUL',"MUL_T"])
     group.add_argument("-tran_type", type=str,  choices=['tod_cc','cc_tod','tod_qa','qa_tod','tod_crs','crs_tod','cc_qa','qa_cc','cc_crs','crs_cc','qa_crs','crs_qa'])
+    group.add_argument("-save_best_model", default=False)
+
+    group = parser.add_argument_group("Sparse Sharing")
+    group.add_argument("-mask_prob", type=float, default=0.5)
+    group.add_argument("-mask_ckpt", type=str, default=None)
+    group.add_argument("-train_subnet", action='store_true')
+    group.add_argument("-search_subnet", action='store_true')
+    group.add_argument("-gen_random_mask", action='store_true')
+    group.add_argument("-include-embedding", action="store_true")
+    group.add_argument("-exclude-output-proj", action="store_true")
+
 def check_config(parser):
     """ parse arguments and check configuration """
     cfg = parser.parse_args()

@@ -23,6 +23,7 @@ import os
 import json
 import pickle
 import logging
+import torch
 
 
 def save_json(obj, save_path, indent=4):
@@ -96,3 +97,69 @@ def get_or_create_logger(logger_name=None, log_dir=None):
         logger.addHandler(file_handler)
 
     return logger
+
+def gen_mask_with_prob(state, p, gen_part="all", random_gen=False, include_embedding=False,exclude_output_proj=False):
+    """
+    generate mask with probability
+    :return: mask_dict
+    """
+
+    def gen_each_random_mask_with_prob(weight, p):
+        """
+        :param weight: a tensor
+        :param p: probability
+        :return:
+        """
+        mask = torch.rand_like(weight.float()) > p
+
+        return mask
+
+    def gen_each_mask_with_prob(weight, p):
+        """
+        :param weight: a tensor
+        :param p: probability
+        :return:
+        """
+        total_size = weight.nelement()
+        kth = int(p * total_size)
+        weight = torch.abs(weight.float())
+        kth_element, _ = torch.kthvalue(weight.view(-1), k=kth, dim=0)
+        kth_element = kth_element.tolist()  # float
+        mask = weight > kth_element
+
+        return mask
+
+    def gen_embedding_mask_with_prob(weight, p):
+        # mask embedding is a little different, we treat each vector in embedding weight as a linear.
+        weight = torch.abs(weight.float())
+        dim = weight.size(1)
+        kth = int(p * dim)
+        kth_element, _ = torch.kthvalue(weight, k=kth, dim=1, keepdim=True)  # kth_element: (num_vec,1)
+        mask = weight > kth_element
+
+        return mask
+
+
+    mask_dict = {}
+    gen_func = gen_each_random_mask_with_prob if random_gen else gen_each_mask_with_prob
+    for k, v in state.items():
+        if "weight" in k and "embed" not in k.lower() and "layer_norm" not in k:
+            if gen_part == "all":
+                mask_dict[k] = gen_func(v, p)
+            elif gen_part == "encoder":
+                if "encoder" in k:
+                    mask_dict[k] = gen_func(v, p)
+            elif gen_part == "decoder":
+                if "decoder" in k:
+                    mask_dict[k] = gen_func(v, p)
+            else:
+                raise NotImplementedError
+        if include_embedding and "weight" in k and "embed" in k.lower():
+            mask_dict[k] = gen_embedding_mask_with_prob(v, p)
+
+    if exclude_output_proj:
+        for k in list(state['model'].keys()):
+            if 'output_projection' in k:
+                print("Delete output projection")
+                del state['model'][k]
+    return mask_dict

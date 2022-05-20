@@ -117,7 +117,7 @@ class MultiWOZDataset(Dataset):
                 context, span_dict = self.flatten_dial_history(dial_history, span_history, len(turn['user']),
                                                                self.context_size)
                 encoder_input_ids_1 = context + turn['user'] + [self.reader.eos_token_id]
-                encoder_input_ids_2 = context + turn["user"] + turn["dbpn"] + [self.reader.eos_token_id]
+                encoder_input_ids_2 = context + turn["user"] + turn["bspn"] + turn["dbpn"] + [self.reader.eos_token_id]
 
                 # add current span of user utterance
                 for domain, ss_dict in turn['user_span'].items():
@@ -827,9 +827,11 @@ class MultiWOZReader(BaseReader):
     def get_data_dir(self):
         print(self.cfg.data_type)
         if self.cfg.data_type=='TOD':
-            return os.path.join("data", "MultiWOZ_{}".format(self.version), "processed")
-        elif self.cfg.data_type=='CC':
-            return os.path.join("data", "chit_chat","FusedChat")
+            return os.path.join("data", "MultiWOZ_2.0", "processed")
+        elif self.cfg.data_type=='CC_FU':
+            return os.path.join("data", "CC","FusedChat")
+        elif self.cfg.data_type=='CC_UB':
+            return os.path.join('data', "CC","Ubuntu")
         elif self.cfg.data_type=='QA':
             return os.path.join("data", "CQA")
         elif self.cfg.data_type=="CRS":

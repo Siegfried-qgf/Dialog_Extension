@@ -21,7 +21,8 @@ def chit_chat_list(turns,types):
 
 def list2pair(cclist):
     pair=[]
-    for i in range(int(len(cclist)/2)):
+    n=int(len(cclist)/2)
+    for i in range(0,2*n,2):
         pair.append((cclist[i],cclist[i+1]))
     return pair
 
@@ -48,6 +49,11 @@ def trans(path):
             dict["nodelx_resp"] = sys
             dict["pointer"] = "0,0,0,0,0,0"
             dict["match"] = ""
+
+            dict["constraint"]="[chit] [value_chit_act] chit"
+            dict["cons_delex"] = "[chit] [value_chit_act] "
+
+            '''
             dict["constraint"] = "[chit] "
             dict["cons_delex"] = "[chit] "
             user = nlp(user)
@@ -72,7 +78,7 @@ def trans(path):
                 dict["cons_delex"] += "[value_noun] "
                 for n in noun:
                     dict["constraint"] += str(n)+" "
-
+            '''
             dict["sys_act"] = "[chit] [chit_act] chit"
             dict["turn_num"] = i
             dict["turn_domain"] = "[chit]"

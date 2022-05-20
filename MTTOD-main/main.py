@@ -69,7 +69,11 @@ def main():
     if cfg.run_type == "train":
         runner.train()
     else:
-        runner.predict()
+        if cfg.search_subnet:
+            logger.info("这里来个网络剪枝")
+            runner.search_subnet()
+        else:
+            runner.predict()
 
 
 if __name__ == "__main__":

@@ -4,25 +4,32 @@ sys.path.append("./../..")
 from utils.io_utils import load_json,save_json
 path_woz="./../MultiWOZ_2.0/processed/"
 path_qa="./../CQA/"
-path_cc="./../chit_chat/FusedChat/"
+path_cc= "../CC/FusedChat/"
 path_recommend="./../CRS/ReDial/"
-
-def cat_data(data1,data2,data3,data4):
+path_squad="./../CQA/Squad/"
+path_ubuntu="./../CC/Ubuntu/"
+def cat_data(data1,data2,data3,data4,data5,data6):
     data1=load_json(data1)
     data2=load_json(data2)
     data3=load_json(data3)
     data4=load_json(data4)
+    data5=load_json(data5)
+    data6 = load_json(data6)
     print("TOD :" + str(len(data1)))
     print("QA :" + str(len(data2)))
-    print("CC :" + str(len(data3)))
+    print("FusedChat :" + str(len(data3)))
     print("CRS :" + str(len(data4)))
+    print("Ubuntu :" + str(len(data5)))
+    print("Squad :" + str(len(data6)))
     data1.update(data2)
     data1.update(data3)
     data1.update(data4)
+    data1.update(data5)
+    data1.update(data6)
     print(len(data1))
-    save_json(data1,"./../multi_data/test_MUL.json")
+    save_json(data1,"./../multi_data/train_MUL.json")
 
-cat_data(path_woz+'test_TOD.json',path_qa+'test_QA.json',path_cc+"test_CC.json",path_recommend+"test_CRS.json")
+cat_data(path_woz+'train_TOD.json',path_qa+'train_QA.json',path_cc+"train_CC.json",path_recommend+"train_CRS.json",path_ubuntu+"train_CC_UB.json",path_squad+"train_QA_S.json")
 
 '''
 def cat_data2(data1,data2):

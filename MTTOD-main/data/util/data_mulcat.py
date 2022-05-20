@@ -7,7 +7,7 @@ sys.path.append("./../..")
 from utils.io_utils import load_json,save_json
 path_woz="./../MultiWOZ_2.0/processed/"
 path_qa="./../CQA/"
-path_cc="./../chit_chat/FusedChat/"
+path_cc= "../CC/FusedChat/"
 path_recommend="./../CRS/ReDial/"
 
 test_woz=load_json(path_woz+"test_TOD.json")
