@@ -3,7 +3,9 @@ written by qgf 2022/4/22
 '''
 import tqdm
 import pickle as pkl
-
+import sys
+sys.path.append("./..")
+from utils.io_utils import get_or_create_logger, load_json, save_json ,gen_mask_with_prob
 entity2entityid = pkl.load(open("./data/CRS/ReDial/entity2entityId.pkl", "rb"))
 def id2movie(v):
     for key, value in entity2entityid.items():
@@ -28,8 +30,9 @@ def recall(data):
     print("总数 "+str(count))
     return recall_1/count
 
-#crs=load_json("./MUL_5.6/ckpt-epoch5/CRS_goal")
-#print(recall(crs))
+if __name__=="__main__":
+    crs=load_json("./ckpt/CRS_only_epoch20/ckpt-epoch20/CRS")
+    print(recall(crs))
 
 
 

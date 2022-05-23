@@ -83,17 +83,18 @@ def trans(path):
             dict["turn_num"] = i
             dict["turn_domain"] = "[chit]"
             log.append(dict)
+
         it["goal"]={}
         it["log"] = log
         id_ext=id+".json"
         if id_ext in testlist:
-            id=id+"_cc"
+            id ="FU_"+id
             data_m_test[id]=it
         elif id_ext in vallist:
-            id = id + "_cc"
+            id ="FU_"+id
             data_m_dev[id]=it
         else:
-            id = id + "_cc"
+            id ="FU_"+id
             data_m_train[id]=it
     return data_m_train,data_m_dev,data_m_test
 
@@ -114,8 +115,11 @@ if __name__ == "__main__":
     tr_a.update(tr_p)
     de_a.update(de_p)
     te_a.update(te_p)
-    save_json(tr_a,"./train_CC.json")
-    save_json(de_a, "./dev_CC.json")
-    save_json(te_a, "./test_CC.json")
+    print(len(tr_a))
+    print(len(de_a))
+    print(len(te_a))
+    save_json(tr_a,"./train_CC_FU.json")
+    save_json(de_a, "./dev_CC_FU.json")
+    save_json(te_a, "./test_CC_FU.json")
 
 

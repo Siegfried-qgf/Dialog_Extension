@@ -33,12 +33,14 @@ def trans(path):
         dict["nodelx_resp"] = "OK, let me see?"
         dict["pointer"] = "0,0,0,0,0,0"
         dict["match"] = ""
+        '''
         user=copy.deepcopy(dict["user"])
         print(user)
         user=nlp(user)
         for entity in user.ents:
             print(entity, entity.label_, entity.label)
         input()
+        '''
         dict["constraint"] = "[answer] [value_document] answer"
         dict["cons_delex"] = "[answer] [value_document]"
         dict["sys_act"] = "[answer] [document_act] answer"
@@ -66,7 +68,7 @@ def trans(path):
 
         it["goal"]={}
         it["log"]=log
-        id=item["id"]
+        id="CO_"+item["id"]
         data_m[id]=it
     print(len(data_m))
     save_json(data_m, "./dev_QA.json")

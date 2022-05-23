@@ -29,7 +29,7 @@ def cat_data(data1,data2,data3,data4,data5,data6):
     print(len(data1))
     save_json(data1,"./../multi_data/train_MUL.json")
 
-cat_data(path_woz+'train_TOD.json',path_qa+'train_QA.json',path_cc+"train_CC.json",path_recommend+"train_CRS.json",path_ubuntu+"train_CC_UB.json",path_squad+"train_QA_S.json")
+cat_data(path_woz+'train_TOD.json',path_qa+'train_QA.json',path_cc+"train_CC_FU.json",path_recommend+"train_CRS.json",path_ubuntu+"train_CC_UB.json",path_squad+"train_QA_S.json")
 
 '''
 def cat_data2(data1,data2):

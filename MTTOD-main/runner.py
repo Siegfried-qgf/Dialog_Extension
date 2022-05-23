@@ -17,7 +17,7 @@ import warnings
 import torch
 import torch.nn as nn
 from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import DataLoader, sampler
+from torch.utils.data import sampler,DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from transformers import AdamW, get_linear_schedule_with_warmup, get_constant_schedule
 from transformers.modeling_outputs import BaseModelOutput
@@ -27,7 +27,7 @@ from model import T5WithSpan, T5WithTokenSpan
 from reader import MultiWOZIterator, MultiWOZReader,MultiWOZDataset, SequentialDistributedSampler, CollatorTrain
 from evaluator import MultiWozEvaluator
 from nltk import word_tokenize
-from utils import definitions
+from utils import definitions,MyDataLoader
 from utils.io_utils import get_or_create_logger, load_json, save_json ,gen_mask_with_prob
 from utils.ddp_utils import reduce_mean, reduce_sum
 import eval_chitchat
@@ -290,7 +290,7 @@ class MultiWOZRunner(BaseRunner):
          'learn_positional_embeddings': False, 'embeddings_scale': True, 'n_entity': 64368, 'n_relation': 214,
          'n_concept': 29308, 'n_con_relation': 48, 'dim': 128, 'n_hop': 2, 'kge_weight': 1, 'l2_weight': 2.5e-06,
          'n_memory': 32, 'item_update_mode': '0,1', 'using_all_hops': True, 'num_bases': 8}
-        if cfg.data_type=="CRS":
+        if cfg.data_type=="CRS" and cfg.run_type=="predict":
         #if cfg.data_type=="MUL_T":
             from KGSF import run
             self.loop=run.TrainLoop_fusion_rec(opt,is_finetune=False)
@@ -452,11 +452,11 @@ class MultiWOZRunner(BaseRunner):
         if self.cfg.num_gpus > 1:
             train_sampler = DistributedSampler(train_dataset)
         else:
-            train_sampler = sampler(train_dataset)
+            train_sampler = sampler.RandomSampler(train_dataset)
 
         train_collator = CollatorTrain(self.reader.pad_token_id, self.reader.tokenizer)
-        train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=self.cfg.batch_size_per_gpu,
-                                      collate_fn=train_collator)
+
+        train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=self.cfg.batch_size_per_gpu,collate_fn=train_collator)
         num_training_steps_per_epoch = len(train_dataloader)
         optimizer, scheduler = self.get_optimizer_and_scheduler(
             num_training_steps_per_epoch, self.cfg.batch_size_per_gpu)
@@ -465,7 +465,8 @@ class MultiWOZRunner(BaseRunner):
 
         max_score = 0
         for epoch in range(1, self.cfg.epochs + 1):
-            train_dataloader.sampler.set_epoch(epoch)
+            if self.cfg.num_gpus > 1:
+                train_dataloader.sampler.set_epoch(epoch)
 
             train_loss = self.train_epoch(train_dataloader, optimizer, scheduler, reporter)
 
@@ -1224,7 +1225,7 @@ class MultiWOZRunner(BaseRunner):
             logger.info('bleu1: %.3f; bleu2: %.3f; dict1: %.3f; dict2: %.3f' % (bleu1, bleu2, dict1, dict2))
             score=bleu1+bleu2+dict1+dict2
 
-        '''
+
         if self.cfg.data_type=="QA":
             rqa = []
             for dial_id, dial in results.items():
@@ -1240,9 +1241,9 @@ class MultiWOZRunner(BaseRunner):
             f1=eval_QA.eval_qa("./data/CQA/coqa-dev-v1.0.json", "outqa.json")
             logger.info('f1: %.1f' % f1)
             score = f1
-        '''
 
-        if self.cfg.data_type=="QA":
+
+        if self.cfg.data_type=="QA_S":
             rqa = {}
             for dial_id, dial in results.items():
                 for turn in dial:
@@ -1253,7 +1254,7 @@ class MultiWOZRunner(BaseRunner):
                     save_json(rqa, "./outqa.json")
 
         if self.cfg.data_type=="CRS":
-            recall=eval_CRS(results)
+            recall=eval_CRS.recall(results)
             logger.info('recall: %.3f' % recall)
             score=recall
 

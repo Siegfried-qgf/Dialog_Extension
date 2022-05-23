@@ -107,6 +107,7 @@ class MultiWOZDataset(Dataset):
         self.turn_span_label_ids = []
         self.turn_belief_label_ids = []
         self.turn_resp_label_ids = []
+        self.turn_type=[]
 
         for dial in tqdm(self.dials, desc='Creating turn batches'):
 
@@ -145,6 +146,20 @@ class MultiWOZDataset(Dataset):
                 self.turn_span_label_ids.append(span_label_ids)
                 self.turn_belief_label_ids.append(belief_label_ids)
                 self.turn_resp_label_ids.append(resp_label_ids)
+                #判断数据是哪个数据集
+
+                if turn["dial_id"][0:2]=="fu":
+                    self.turn_type.append(1)
+                elif turn["dial_id"][0:2]=="ub":
+                    self.turn_type.append(2)
+                elif turn["dial_id"][0:2]=="co":
+                    self.turn_type.append(3)
+                elif turn["dial_id"][0:2]=="sq":
+                    self.turn_type.append(4)
+                elif turn["dial_id"][0:3]=="rec":
+                    self.turn_type.append(5)
+                else:
+                    self.turn_type.append(0)
 
                 turn_span_info = {}
                 for domain, ss_dict in turn['user_span'].items():
@@ -255,7 +270,7 @@ class MultiWOZDataset(Dataset):
 
     def __getitem__(self, index):
         return self.turn_encoder_input_ids_1[index],self.turn_encoder_input_ids_2[index],self.turn_span_label_ids[index], self.turn_belief_label_ids[index], \
-               self.turn_resp_label_ids[index]
+               self.turn_resp_label_ids[index],self.turn_type[index]
 
 
 class CollatorPredict(object):
@@ -286,7 +301,7 @@ class CollatorTrain(object):
         batch_size = len(batch)
 
         for i in range(batch_size):
-            encoder_input_ids_1,encoder_input_ids_2,span_label_ids, belief_label_ids, resp_label_ids = batch[i]
+            encoder_input_ids_1,encoder_input_ids_2,span_label_ids, belief_label_ids, resp_label_ids,_ = batch[i]
             batch_encoder_input_ids_1.append(torch.tensor(encoder_input_ids_1, dtype=torch.long))
             batch_encoder_input_ids_2.append(torch.tensor(encoder_input_ids_2, dtype=torch.long))
             batch_span_label_ids.append(torch.tensor(span_label_ids, dtype=torch.long))
@@ -834,6 +849,8 @@ class MultiWOZReader(BaseReader):
             return os.path.join('data', "CC","Ubuntu")
         elif self.cfg.data_type=='QA':
             return os.path.join("data", "CQA")
+        elif self.cfg.data_type=='QA_S':
+            return os.path.join("data", "CQA","Squad")
         elif self.cfg.data_type=="CRS":
             return os.path.join("data", "CRS","ReDial")
         elif self.cfg.data_type=="MUL":

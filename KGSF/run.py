@@ -272,7 +272,7 @@ class TrainLoop_fusion_rec():
     def id2movie(self,v):
         for key, value in self.entity2entityid.items():
             if value == v:
-                print(key)
+                #print(key)
                 if type(key)== str:
                     return key[29:-1]
                 else:

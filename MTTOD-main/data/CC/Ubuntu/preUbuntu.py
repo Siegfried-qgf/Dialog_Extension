@@ -73,7 +73,7 @@ def tran(data,type):
             log.append(dict)
         it["goal"] = {}
         it["log"]=log
-        d["cc_"+str(index)]=it
+        d["UB_"+str(index)]=it
     return d
 tr=tran(train_data,"tr")
 print(len(tr))
