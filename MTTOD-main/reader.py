@@ -298,22 +298,24 @@ class CollatorTrain(object):
         batch_span_label_ids = []
         batch_belief_label_ids = []
         batch_resp_label_ids = []
+        batch_turn_type=[]
         batch_size = len(batch)
 
         for i in range(batch_size):
-            encoder_input_ids_1,encoder_input_ids_2,span_label_ids, belief_label_ids, resp_label_ids,_ = batch[i]
+            encoder_input_ids_1,encoder_input_ids_2,span_label_ids, belief_label_ids, resp_label_ids,turn_type = batch[i]
             batch_encoder_input_ids_1.append(torch.tensor(encoder_input_ids_1, dtype=torch.long))
             batch_encoder_input_ids_2.append(torch.tensor(encoder_input_ids_2, dtype=torch.long))
             batch_span_label_ids.append(torch.tensor(span_label_ids, dtype=torch.long))
             batch_belief_label_ids.append(torch.tensor(belief_label_ids, dtype=torch.long))
             batch_resp_label_ids.append(torch.tensor(resp_label_ids, dtype=torch.long))
+            batch_turn_type.append(turn_type)
 
         batch_encoder_input_ids_1 = pad_sequence(batch_encoder_input_ids_1, batch_first=True, padding_value=self.pad_token_id)
         batch_encoder_input_ids_2 = pad_sequence(batch_encoder_input_ids_2, batch_first=True,padding_value=self.pad_token_id)
         batch_span_label_ids = pad_sequence(batch_span_label_ids, batch_first=True, padding_value=self.pad_token_id)
         batch_belief_label_ids = pad_sequence(batch_belief_label_ids, batch_first=True, padding_value=self.pad_token_id)
         batch_resp_label_ids = pad_sequence(batch_resp_label_ids, batch_first=True, padding_value=self.pad_token_id)
-        return (batch_encoder_input_ids_1,batch_encoder_input_ids_2), batch_span_label_ids, batch_belief_label_ids, batch_resp_label_ids
+        return (batch_encoder_input_ids_1,batch_encoder_input_ids_2), batch_span_label_ids, batch_belief_label_ids, batch_resp_label_ids,batch_turn_type
 
 class BaseIterator(object):
     def __init__(self, reader):
@@ -845,6 +847,8 @@ class MultiWOZReader(BaseReader):
             return os.path.join("data", "MultiWOZ_2.0", "processed")
         elif self.cfg.data_type=='CC_FU':
             return os.path.join("data", "CC","FusedChat")
+        elif self.cfg.data_type=="CC":
+            return os.path.join("data","CC","CC_combined")
         elif self.cfg.data_type=='CC_UB':
             return os.path.join('data', "CC","Ubuntu")
         elif self.cfg.data_type=='QA':
