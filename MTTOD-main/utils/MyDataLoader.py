@@ -1372,9 +1372,9 @@ class MyBatchSampler(Sampler[List[int]]):
         batch3=[]
         batch4=[]
         batch5=[]
-        for idx in self.sampler:
+        for i,idx in enumerate(self.sampler):
             _,_,_,_,_,type=self.dataset[idx]
-            print(str(idx)+"type是"+str(type))
+            #print(str(idx)+"type是"+str(type))
             if type==0:
                 batch0.append(idx)
             elif type==1:
@@ -1391,31 +1391,63 @@ class MyBatchSampler(Sampler[List[int]]):
                 warnings.warn("没找到该数据集类型"+str(type))
 
             if len(batch0) == self.batch_size:
-                print(batch0)
+                #print(batch0)
                 yield batch0
                 batch0 = []
             elif len(batch1) == self.batch_size:
-                print(batch1)
+                #print(batch1)
                 yield batch1
                 batch1=[]
             elif len(batch2)==self.batch_size:
-                print(batch2)
+                #print(batch2)
                 yield batch2
                 batch2=[]
             elif len(batch3)==self.batch_size:
-                print(batch3)
+                #print(batch3)
                 yield batch3
                 batch3=[]
             elif len(batch4)==self.batch_size:
-                print(batch4)
+                #print(batch4)
                 yield batch4
                 batch4=[]
             elif len(batch5)==self.batch_size:
-                print(batch5)
+                #print(batch5)
                 yield batch5
                 batch5=[]
-            else:
-                continue
+            if i ==(len(self.sampler)-1):
+                l=[]
+                l.append(batch0)
+                l.append(batch1)
+                l.append(batch2)
+                l.append(batch3)
+                l.append(batch4)
+                l.append(batch5)
+                n=[]
+                n.append(len(batch0))
+                n.append(len(batch1))
+                n.append(len(batch2))
+                n.append(len(batch3))
+                n.append(len(batch4))
+                n.append(len(batch5))
+                num=str(n).count("1")
+                print("num为"+str(num))
+                if num==2 or num==3:
+                    yield l[n.index(1)]
+                    print("yield 1个")
+                elif num==4 or num==5:
+                    yield l[n.index(1)]
+                    n[n.index(1)]=0
+                    yield l[n.index(1)]
+                    print("yield 2个")
+                elif num==6:
+                    yield l[n.index(1)]
+                    n[n.index(1)] = 0
+                    yield l[n.index(1)]
+                    n[n.index(1)] = 0
+                    yield l[n.index(1)]
+                    print("yield 3个")
+
+
 
         if len(batch0) > 0 and not self.drop_last:
             yield batch0

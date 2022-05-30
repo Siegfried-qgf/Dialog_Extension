@@ -205,6 +205,8 @@ class MultiWOZDataset(Dataset):
                 dial_history.append(turn_text)
                 span_history.append(turn_span_info)
 
+
+
     def flatten_dial_history(self, dial_history, span_history, len_postfix, context_size):
         if context_size > 0:
             context_size -= 1
@@ -859,6 +861,10 @@ class MultiWOZReader(BaseReader):
             return os.path.join("data", "CRS","ReDial")
         elif self.cfg.data_type=="MUL":
             return os.path.join("data", "multi_data")
+        elif self.cfg.data_type=="CC_DD":
+            return os.path.join("data","CC","DailyDialog")
+        elif self.cfg.data_type=="CC_FU_DD":
+            return os.path.join("data","CC","CC_FU_DD")
         else:
             return os.path.join("data","multi_scene")
 
@@ -884,8 +890,10 @@ class MultiWOZReader(BaseReader):
                 data = load_json(self.get_data_dir()+"/test_{}.json".format(self.cfg.data_type))
 
         encoded_data = []
+        c=0
         for fn, dial in tqdm(data.items(), desc=data_type, total=len(data)):
             encoded_dial = []
+
 
             accum_constraint_dict = {}
             for t in dial["log"]:
@@ -1008,8 +1016,10 @@ class MultiWOZReader(BaseReader):
                 prev_bspn = t["constraint"]
 
             encoded_data.append(encoded_dial)
-
+            #c=c+1
+            #if c==500:
         return encoded_data
+        #return encoded_data
 
     def bspn_to_constraint_dict(self, bspn):
         bspn = bspn.split() if isinstance(bspn, str) else bspn

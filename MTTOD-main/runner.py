@@ -63,9 +63,13 @@ class Reporter(object):
         self.global_step += 1
         self.step_time += (time.time() - start_time)
 
-        self.belief_loss += step_outputs["belief"]["loss"]
-        self.belief_correct += step_outputs["belief"]["correct"]
-        self.belief_count += step_outputs["belief"]["count"]
+        if "belief" in step_outputs:
+            self.belief_loss += step_outputs["belief"]["loss"]
+            self.belief_correct += step_outputs["belief"]["correct"]
+            self.belief_count += step_outputs["belief"]["count"]
+            do_belief_stats = True
+        else:
+            do_belief_stats = False
 
         if "span" in step_outputs:
             self.span_loss += step_outputs["span"]["loss"]
@@ -90,22 +94,11 @@ class Reporter(object):
             self.summary_writer.add_scalar("lr", lr, global_step=self.global_step)
 
             if self.global_step % self.log_frequency == 0:
-                self.info_stats("train", self.global_step, do_span_stats, do_resp_stats)
+                self.info_stats("train", self.global_step, do_belief_stats,do_span_stats, do_resp_stats)
 
-    def info_stats(self, data_type, global_step, do_span_stats=False, do_resp_stats=False):
+    def info_stats(self, data_type, global_step,do_belief_stats=False, do_span_stats=False, do_resp_stats=False):
         avg_step_time = self.step_time / self.log_frequency
 
-        belief_ppl = math.exp(self.belief_loss / self.belief_count)
-        belief_acc = (self.belief_correct / self.belief_count) * 100
-
-        self.summary_writer.add_scalar(
-            "{}/belief_loss".format(data_type), self.belief_loss, global_step=global_step)
-
-        self.summary_writer.add_scalar(
-            "{}/belief_ppl".format(data_type), belief_ppl, global_step=global_step)
-
-        self.summary_writer.add_scalar(
-            "{}/belief_acc".format(data_type), belief_acc, global_step=global_step)
 
         if data_type == "train":
             common_info = "step {0:d}; step-time {1:.2f}s; lr {2:.2e};".format(
@@ -113,8 +106,22 @@ class Reporter(object):
         else:
             common_info = "[Validation]"
 
-        belief_info = "[belief] loss {0:.2f}; ppl {1:.2f}; acc {2:.2f}".format(
-            self.belief_loss, belief_ppl, belief_acc)
+        if do_belief_stats:
+            belief_ppl = math.exp(self.belief_loss / self.belief_count)
+            belief_acc = (self.belief_correct / self.belief_count) * 100
+
+            self.summary_writer.add_scalar(
+            "{}/belief_loss".format(data_type), self.belief_loss, global_step=global_step)
+
+            self.summary_writer.add_scalar(
+            "{}/belief_ppl".format(data_type), belief_ppl, global_step=global_step)
+
+            self.summary_writer.add_scalar(
+            "{}/belief_acc".format(data_type), belief_acc, global_step=global_step)
+            belief_info = "[belief] loss {0:.2f}; ppl {1:.2f}; acc {2:.2f}".format(
+                self.belief_loss, belief_ppl, belief_acc)
+        else:
+            belief_info=""
 
         if do_resp_stats:
             resp_ppl = math.exp(self.resp_loss / self.resp_count)
@@ -193,7 +200,10 @@ class BaseRunner(metaclass=ABCMeta):
         model.to(self.cfg.device)
 
         if self.cfg.num_gpus > 1:
-            model=nn.parallel.DistributedDataParallel(model,device_ids=[self.cfg.local_rank], output_device=self.cfg.local_rank)
+            if self.cfg.train_subnet:
+                model=nn.parallel.DistributedDataParallel(model,device_ids=[self.cfg.local_rank], output_device=self.cfg.local_rank,find_unused_parameters=True)
+            else:
+                model=nn.parallel.DistributedDataParallel(model,device_ids=[self.cfg.local_rank], output_device=self.cfg.local_rank)
 
         model.to(self.cfg.device)
 
@@ -372,10 +382,10 @@ class MultiWOZRunner(BaseRunner):
         loss = belief_loss
 
         if self.cfg.add_auxiliary_task and self.cfg.aux_loss_coeff > 0:
-            loss += (self.cfg.aux_loss_coeff * span_loss)
+            loss=loss+ (self.cfg.aux_loss_coeff * span_loss)
 
         if self.cfg.task == "e2e" and self.cfg.resp_loss_coeff > 0:
-            loss += (self.cfg.resp_loss_coeff * resp_loss)
+            loss =loss+ (self.cfg.resp_loss_coeff * resp_loss)
 
         step_outputs = {"belief": {"loss": belief_loss.item(),
                                    "correct": num_belief_correct.item(),
@@ -422,17 +432,17 @@ class MultiWOZRunner(BaseRunner):
             num_span_correct, num_span_count = self.count_tokens(
                 span_pred, span_labels, pad_id=0)
 
-        loss = belief_loss
+        loss_temp = belief_loss
         step_outputs = {"belief": {"loss": belief_loss.item(),
                                    "correct": num_belief_correct.item(),
                                    "count": num_belief_count.item()}}
 
         if self.cfg.add_auxiliary_task and self.cfg.aux_loss_coeff > 0:
-            loss += (self.cfg.aux_loss_coeff * span_loss)
+            loss_temp ==loss_temp+ (self.cfg.aux_loss_coeff * span_loss)
             step_outputs["span"] = {"loss": span_loss.item(),
                                     "correct": num_span_correct.item(),
                                     "count": num_span_count.item()}
-
+        loss=loss_temp
         return loss,step_outputs
 
     def step_fn_resp(self,inputs,resp_labels):
@@ -441,7 +451,6 @@ class MultiWOZRunner(BaseRunner):
         resp_labels = resp_labels.to(self.cfg.device)
 
         attention_mask_2 = torch.where(inputs_2 == self.reader.pad_token_id, 0, 1)
-
         resp_outputs = self.model(input_ids=inputs_2,
                                   attention_mask=attention_mask_2,
                                   lm_labels=resp_labels,
@@ -480,11 +489,13 @@ class MultiWOZRunner(BaseRunner):
 
         return step_outputs_all
 
-    def train_epoch(self, data_loader, optimizer, scheduler, reporter=None):
+
+    def train_epoch_separate(self, data_loader, optimizer, scheduler, reporter=None):
         self.model.train()
         self.model.zero_grad()
-        epoch_step, train_loss = 0, 0.
-        for batch in iter(data_loader):
+        epoch_step, train_loss_bs,train_loss_resp = 0, 0.,0.
+        for batch in data_loader:
+
             start_time_bs = time.time()
             inputs, span_labels, belief_labels, resp_labels,turn_type = batch
 
@@ -495,7 +506,7 @@ class MultiWOZRunner(BaseRunner):
                 loss_bs = loss_bs / self.cfg.grad_accum_steps
 
             loss_bs.backward()
-            train_loss += loss_bs.item()
+            train_loss_bs += loss_bs.item()
 
             torch.nn.utils.clip_grad_norm_(
                 self.model.parameters(), self.cfg.max_grad_norm)
@@ -505,13 +516,13 @@ class MultiWOZRunner(BaseRunner):
                 scheduler.step()
                 optimizer.zero_grad()
                 lr = scheduler.get_last_lr()[0]
+
                 if reporter is not None:
                     reporter.step(start_time_bs, lr, step_outputs_bs)
 
             if self.cfg.train_subnet:
                 # dst结束 保存参数
-                pre_dict=copy.deepcopy(self.model.state_dict())
-
+                pre_dict=copy.deepcopy(self.model.module.state_dict())
                 if turn_type[0] == 0:
                     self.mask_dict=self.mask_dict_tod
                 elif turn_type[0]== 1 or turn_type[0]==2:
@@ -522,18 +533,19 @@ class MultiWOZRunner(BaseRunner):
                     self.mask_dict=self.mask_dict_crs
                 else:
                     warnings.warn("找不到该类型"+turn_type[0])
-                for k, v in self.model.named_parameters():
+
+                for k, v in self.model.module.named_parameters():
                     if k in self.mask_dict:
-                        v.data = v * self.mask_dict[k].cuda()
+                        v.data = v * self.mask_dict[k]
 
             start_time_resp = time.time()
             loss_resp, step_outputs_resp = self.step_fn_resp(inputs, resp_labels)
-
             if self.cfg.grad_accum_steps > 1:
                 loss_resp= loss_resp / self.cfg.grad_accum_steps
 
             loss_resp.backward()
-            train_loss+=loss_resp.item()
+            train_loss_resp+=loss_resp.item()
+
 
             torch.nn.utils.clip_grad_norm_(
                 self.model.parameters(), self.cfg.max_grad_norm)
@@ -545,20 +557,21 @@ class MultiWOZRunner(BaseRunner):
                 lr = scheduler.get_last_lr()[0]
                 if reporter is not None:
                     reporter.step(start_time_resp, lr, step_outputs_resp)
+
             if self.cfg.train_subnet:
-                for k, v in self.mask_dict:
-                    dim0,dim1=v.shape
-                    for i in range(dim0):
-                        for j in range(dim1):
-                            if v[i][j]==False:
-                                self.model.state_dict()[k][i][j]=pre_dict[k][i][j]
-                            else:
-                                continue
+                for k, v in self.model.module.named_parameters():
+                    if k in self.mask_dict:
+                        retained_mask = self.mask_dict[k] == False
+                        v.data = v.data * self.mask_dict[k] + pre_dict[k] * retained_mask
+
             epoch_step += 1
 
-        return train_loss
+        if self.cfg.num_gpus > 1:
+            torch.distributed.barrier()
 
-    '''
+        return train_loss_bs,train_loss_resp
+
+
     def train_epoch(self, data_loader, optimizer, scheduler, reporter=None):
         self.model.train()
         self.model.zero_grad()
@@ -592,7 +605,7 @@ class MultiWOZRunner(BaseRunner):
             epoch_step += 1
 
         return train_loss
-    '''
+
     def train(self):
         if self.cfg.train_subnet:
             self.mask_dict_tod=torch.load("./ckpt/TOD_only_epoch10/ckpt-epoch8/subnet.pth")
@@ -614,6 +627,15 @@ class MultiWOZRunner(BaseRunner):
             del self.mask_dict_qa['resp_lm_head.weight']
             del self.mask_dict_crs['resp_lm_head.weight']
 
+            for k, v in self.mask_dict_tod.items():
+                self.mask_dict_tod[k] = v.to(self.cfg.device)
+            for k, v in self.mask_dict_cc.items():
+                self.mask_dict_cc[k] = v.to(self.cfg.device)
+            for k, v in self.mask_dict_qa.items():
+                self.mask_dict_qa[k] = v.to(self.cfg.device)
+            for k, v in self.mask_dict_crs.items():
+                self.mask_dict_crs[k] = v.to(self.cfg.device)
+
         train_dataset = MultiWOZDataset(self.reader, 'train', self.cfg.task, self.cfg.ururu,
                                         context_size=self.cfg.context_size, num_dialogs=self.cfg.num_train_dialogs,
                                         excluded_domains=self.cfg.excluded_domains)
@@ -624,8 +646,10 @@ class MultiWOZRunner(BaseRunner):
             train_sampler = sampler.RandomSampler(train_dataset)
 
         train_collator = CollatorTrain(self.reader.pad_token_id, self.reader.tokenizer)
-
-        train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=self.cfg.batch_size_per_gpu,collate_fn=train_collator)
+        if self.cfg.train_subnet:
+            train_dataloader = MyDataLoader.DataLoader(train_dataset, sampler=train_sampler, batch_size=self.cfg.batch_size_per_gpu,collate_fn=train_collator,drop_last=True)
+        else:
+            train_dataloader=DataLoader(train_dataset, sampler=train_sampler, batch_size=self.cfg.batch_size_per_gpu,collate_fn=train_collator)
         num_training_steps_per_epoch = len(train_dataloader)
         optimizer, scheduler = self.get_optimizer_and_scheduler(
             num_training_steps_per_epoch, self.cfg.batch_size_per_gpu)
@@ -636,14 +660,12 @@ class MultiWOZRunner(BaseRunner):
         for epoch in range(1, self.cfg.epochs + 1):
             if self.cfg.num_gpus > 1:
                 train_dataloader.sampler.set_epoch(epoch)
+            if self.cfg.train_subnet:
+                train_loss = self.train_epoch_separate(train_dataloader, optimizer, scheduler, reporter)
+            else:
+                train_loss = self.train_epoch(train_dataloader, optimizer, scheduler, reporter)
 
-            train_loss = self.train_epoch(train_dataloader, optimizer, scheduler, reporter)
-
-            if self.cfg.num_gpus > 1:
-                torch.distributed.barrier()
-
-            logger.info("done {}/{} epoch, train loss is:{:f}".format(epoch, self.cfg.epochs, train_loss))
-
+            logger.info("done {}/{} epoch".format(epoch, self.cfg.epochs,))
 
             if self.cfg.save_best_model:
                 if self.cfg.local_rank == 0:
@@ -654,12 +676,46 @@ class MultiWOZRunner(BaseRunner):
             else:
                 if self.cfg.local_rank in [0, -1]:
                     self.save_model(epoch)
-            '''
-            if self.cfg.local_rank in [0, -1]:
-                self.save_model(epoch)
-            '''
+
             if self.cfg.num_gpus > 1:
                 torch.distributed.barrier()
+
+    def validation(self):
+        self.model.eval()
+
+        dev_dataset = MultiWOZDataset(self.reader, 'dev', self.cfg.task, self.cfg.ururu,
+                                        context_size=self.cfg.context_size, num_dialogs=self.cfg.num_train_dialogs,
+                                        excluded_domains=self.cfg.excluded_domains)
+
+
+        dev_collator = CollatorTrain(self.reader.pad_token_id, self.reader.tokenizer)
+        if self.cfg.num_gpus > 1:
+            dev_sampler = DistributedSampler(dev_dataset)
+        else:
+            dev_sampler = sampler.RandomSampler(dev_dataset)
+
+        reporter = Reporter(1000000, self.cfg.model_dir)
+
+        torch.set_grad_enabled(False)
+        dev_dataloader = MyDataLoader.DataLoader(dev_dataset, sampler=dev_sampler,
+                                                   batch_size=self.cfg.batch_size_per_gpu, collate_fn=dev_collator)
+
+        epoch_step, train_loss_bs, train_loss_resp = 0, 0., 0.
+        for batch in iter(dev_dataloader):
+
+            inputs, span_labels, belief_labels, resp_labels, turn_type = batch
+            loss_bs, step_outputs_bs = self.step_fn_bs(inputs, span_labels, belief_labels)
+            train_loss_bs += loss_bs.item()
+
+            loss_resp, step_outputs_resp = self.step_fn_resp(inputs, resp_labels)
+            train_loss_resp += loss_resp.item()
+
+        torch.set_grad_enabled(True)
+
+        return train_loss_bs+train_loss_resp
+
+
+
 
     def _train_epoch(self, train_iterator, optimizer, scheduler, reporter=None):
         self.model.train()
@@ -1387,7 +1443,7 @@ class MultiWOZRunner(BaseRunner):
         if self.cfg.output:
             save_json(results, os.path.join(self.cfg.ckpt, self.cfg.output))
 
-        if self.cfg.data_type=="CC_UB" or self.cfg.data_type=="CC_FU" or self.cfg.data_type=="CC":
+        if self.cfg.data_type=="CC_UB" or self.cfg.data_type=="CC_FU" or self.cfg.data_type=="CC" or self.cfg.data_type=="CC_DD" or self.cfg.data_type=="CC_FU_DD":
             evaluator = eval_chitchat.CC_evaluator(self.reader)
             bleu1,bleu2=evaluator.bleu(results)
             dict1,dict2=evaluator.dist(results)
@@ -1402,7 +1458,7 @@ class MultiWOZRunner(BaseRunner):
                     turn_dict = {}
                     if turn['turn_num'] == 0:
                         continue
-                    turn_dict['id'] = dial_id
+                    turn_dict['id'] = dial_id[3:]
                     turn_dict["turn_id"] = turn['turn_num']
                     turn_dict['answer'] = turn['resp_gen'][11:-11]
                     rqa.append(turn_dict)

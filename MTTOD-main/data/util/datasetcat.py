@@ -8,6 +8,7 @@ path_cc= "../CC/FusedChat/"
 path_recommend="./../CRS/ReDial/"
 path_squad="./../CQA/Squad/"
 path_ubuntu="./../CC/Ubuntu/"
+path_dd="./../CC/DailyDialog/"
 def cat_data(data1,data2,data3,data4,data5,data6):
     data1=load_json(data1)
     data2=load_json(data2)
@@ -58,9 +59,9 @@ def cat_datacc(data1,data2):
     data1=load_json(data1)
     data2=load_json(data2)
     print("FusedChat :" + str(len(data1)))
-    print("Ubuntu :" + str(len(data2)))
+    print("DailyDialog :" + str(len(data2)))
     data1.update(data2)
     print(len(data1))
-    save_json(data1,"./../CC/CC_combined/train_CC.json")
+    save_json(data1,"./../CC/CC_FU_DD/test_CC_FU_DD.json")
 
-cat_datacc(path_cc+'train_CC_FU.json',path_ubuntu+"train_CC_UB.json")
+cat_datacc(path_cc+'test_CC_FU.json',path_dd+"test_CC_DD.json")

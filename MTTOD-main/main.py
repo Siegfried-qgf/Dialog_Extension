@@ -17,7 +17,7 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 """
-
+import datetime
 import random
 
 import torch
@@ -43,7 +43,8 @@ def main():
             logger.info('Using Multi-GPU training, number of GPU is {}'.format(cfg.num_gpus))
             torch.cuda.set_device(cfg.local_rank)
             device = torch.device('cuda', cfg.local_rank)
-            torch.distributed.init_process_group(backend='nccl')
+            t=datetime.timedelta(days=1, seconds=0, microseconds=0, milliseconds=0, minutes=0, hours=0, weeks=0)
+            torch.distributed.init_process_group(backend='nccl',timeout=t)
         else:
             logger.info('Using single GPU training.')
             device = torch.device("cuda")
