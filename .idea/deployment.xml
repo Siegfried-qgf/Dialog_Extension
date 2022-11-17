@@ -1,18 +1,25 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="Always" serverName="gfquan@10.176.52.119:20016 password" remoteFilesAllowedToDisappearOnAutoupload="false">
+  <component name="PublishConfigData" autoUpload="Always" serverName="gfquan@10.176.52.118:20032" remoteFilesAllowedToDisappearOnAutoupload="false">
     <serverData>
-      <paths name="gfquan@10.176.52.102:20008">
-        <serverdata>
-          <mappings>
-            <mapping deploy="/exps/MTTOD" local="$PROJECT_DIR$" web="/" />
-          </mappings>
-        </serverdata>
-      </paths>
       <paths name="gfquan@10.176.52.119:20016 password">
         <serverdata>
           <mappings>
-            <mapping deploy="/exps/MTTOD" local="$PROJECT_DIR$" web="/" />
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="gfquan@10.176.52.119:20016 password (1)">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="gfquan@10.176.52.119:20016 password (2)">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>

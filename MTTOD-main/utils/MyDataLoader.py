@@ -1414,38 +1414,40 @@ class MyBatchSampler(Sampler[List[int]]):
                 #print(batch5)
                 yield batch5
                 batch5=[]
-            if i ==(len(self.sampler)-1):
-                l=[]
-                l.append(batch0)
-                l.append(batch1)
-                l.append(batch2)
-                l.append(batch3)
-                l.append(batch4)
-                l.append(batch5)
-                n=[]
-                n.append(len(batch0))
-                n.append(len(batch1))
-                n.append(len(batch2))
-                n.append(len(batch3))
-                n.append(len(batch4))
-                n.append(len(batch5))
-                num=str(n).count("1")
-                print("num为"+str(num))
-                if num==2 or num==3:
-                    yield l[n.index(1)]
-                    print("yield 1个")
-                elif num==4 or num==5:
-                    yield l[n.index(1)]
-                    n[n.index(1)]=0
-                    yield l[n.index(1)]
-                    print("yield 2个")
-                elif num==6:
-                    yield l[n.index(1)]
-                    n[n.index(1)] = 0
-                    yield l[n.index(1)]
-                    n[n.index(1)] = 0
-                    yield l[n.index(1)]
-                    print("yield 3个")
+
+            if self.batch_size==2:
+                if i ==(len(self.sampler)-1):
+                    l=[]
+                    l.append(batch0)
+                    l.append(batch1)
+                    l.append(batch2)
+                    l.append(batch3)
+                    l.append(batch4)
+                    l.append(batch5)
+                    n=[]
+                    n.append(len(batch0))
+                    n.append(len(batch1))
+                    n.append(len(batch2))
+                    n.append(len(batch3))
+                    n.append(len(batch4))
+                    n.append(len(batch5))
+                    num=str(n).count("1")
+                    print("num为"+str(num))
+                    if num==2 or num==3:
+                        yield l[n.index(1)]
+                        print("yield 1个")
+                    elif num==4 or num==5:
+                        yield l[n.index(1)]
+                        n[n.index(1)]=0
+                        yield l[n.index(1)]
+                        print("yield 2个")
+                    elif num==6:
+                        yield l[n.index(1)]
+                        n[n.index(1)] = 0
+                        yield l[n.index(1)]
+                        n[n.index(1)] = 0
+                        yield l[n.index(1)]
+                        print("yield 3个")
 
 
 

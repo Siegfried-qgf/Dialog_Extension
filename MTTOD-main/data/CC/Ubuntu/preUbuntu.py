@@ -15,7 +15,7 @@ train_data=train_data[train_data["Label"]==1]
 print(len(train_data))
 from transformers import T5Tokenizer
 tok=T5Tokenizer.from_pretrained("t5-base")
-train_data=train_data.sample(n=100000,random_state=21)
+train_data=train_data.sample(n=20000,random_state=21)
 
 def tran(data,type):
     d={}
@@ -77,10 +77,9 @@ def tran(data,type):
     return d
 tr=tran(train_data,"tr")
 print(len(tr))
-te=tran(test_data,"te")
 save_json(tr, "./train_CC_UB.json")
-save_json(te,"./test_CC_UB.json")
-save_json(te,"./dev_CC_UB.json")
+#save_json(te,"./test_CC_UB.json")
+#save_json(te,"./dev_CC_UB.json")
 
 
 

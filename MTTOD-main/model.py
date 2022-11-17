@@ -192,7 +192,6 @@ class T5WithSpan(T5ForConditionalGeneration):
                 encoder_hidden_states=encoder_outputs[1] if len(
                     encoder_outputs) > 1 else None,
                 encoder_attentions=encoder_outputs[2] if len(encoder_outputs) > 2 else None)
-
         return outputs
 
 

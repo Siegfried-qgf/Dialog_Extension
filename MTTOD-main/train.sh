@@ -9,8 +9,9 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python -m torch.distributed.launch\
     -run_type train\
     -batch_size_per_gpu 2\
     -batch_size_per_gpu_eval 32\
-    -model_dir ckpt/MUL_epoch10_new\
+    -model_dir ckpt/MUL_epoch10_sparsesharing\
     -epochs 10\
     -seed 42\
     -add_auxiliary_task\
-    -learning_rate 5e-4
+    -learning_rate 5e-4\
+    -train_subnet

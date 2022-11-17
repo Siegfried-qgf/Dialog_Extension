@@ -43,6 +43,8 @@ import config
 from torch.utils.data import Dataset
 logger = get_or_create_logger(__name__)
 
+
+
 class SequentialDistributedSampler(torch.utils.data.sampler.Sampler):
     '''
     Using for inference with DDP.
@@ -73,6 +75,79 @@ class SequentialDistributedSampler(torch.utils.data.sampler.Sampler):
     def __len__(self):
         return self.num_samples
 
+
+class MultiWOZDataset_fs(Dataset):
+    def __init__(self, reader, data_type, task, ururu, context_size=-1, num_dialogs=-1, excluded_domains=None):
+        super().__init__()
+        self.reader = reader
+        self.task = task
+        self.ururu = ururu
+        self.context_size = context_size
+        self.dials = self.reader.data[data_type]
+        self.dial_by_domain = load_json("data/MultiWOZ_2.0/dial_by_domain.json")
+
+        if excluded_domains is not None:
+            logger.info("Exclude domains: {}".format(excluded_domains))
+
+            target_dial_ids = []
+            for domains, dial_ids in self.dial_by_domain.items():
+                domain_list = domains.split("-")
+
+                if len(set(domain_list) & set(excluded_domains)) == 0:
+                    target_dial_ids.extend(dial_ids)
+
+            self.dials = [d for d in self.dials if d[0]["dial_id"] in target_dial_ids]
+
+        if num_dialogs > 0:
+            self.dials = random.sample(self.dials, min(num_dialogs, len(self.dials)))
+        self.create_turn_batch_fs()
+
+    def create_turn_batch_fs(self):
+        logger.info("Creating turn batches...")
+        self.turn_encoder_input_ids = []
+        self.turn_resp_label_ids = []
+        for dial in tqdm(self.dials, desc='Creating turn batches'):
+            dial_history = []
+            for turn in dial:
+                context = self.flatten_dial_history(dial_history, len(turn['user']),
+                                                               self.context_size)
+
+                encoder_input_ids = context + turn['user'] + [self.reader.eos_token_id]
+
+                resp = turn['redx']
+                resp_label_ids = resp + [self.reader.eos_token_id]
+
+                self.turn_encoder_input_ids.append(encoder_input_ids)
+                self.turn_resp_label_ids.append(resp_label_ids)
+
+                turn_text = turn['user'] + turn['resp']
+                dial_history.append(turn_text)
+
+    def flatten_dial_history(self, dial_history,  len_postfix, context_size):
+        if context_size > 0:
+            context_size -= 1
+        if context_size == 0:
+            windowed_context = []
+        elif context_size > 0:
+            windowed_context = dial_history[-context_size:]
+        else:
+            windowed_context = dial_history
+
+        ctx_len = sum([len(c) for c in windowed_context])
+
+        spare_len = self.reader.max_seq_len - len_postfix - 1
+        while ctx_len >= spare_len:
+            ctx_len -= len(windowed_context[0])
+            windowed_context.pop(0)
+        context = list(chain(*windowed_context))
+        return context
+
+    def __len__(self):
+        return len(self.turn_encoder_input_ids)
+
+    def __getitem__(self, index):
+        return self.turn_encoder_input_ids[index], self.turn_resp_label_ids[index]
+
 class MultiWOZDataset(Dataset):
     def __init__(self, reader, data_type, task, ururu, context_size=-1, num_dialogs=-1, excluded_domains=None):
         super().__init__()
@@ -100,6 +175,7 @@ class MultiWOZDataset(Dataset):
 
         self.create_turn_batch()
 
+
     def create_turn_batch(self):
         logger.info("Creating turn batches...")
         self.turn_encoder_input_ids_1 = []
@@ -108,7 +184,7 @@ class MultiWOZDataset(Dataset):
         self.turn_belief_label_ids = []
         self.turn_resp_label_ids = []
         self.turn_type=[]
-
+        count=0
         for dial in tqdm(self.dials, desc='Creating turn batches'):
 
             dial_history = []
@@ -152,7 +228,7 @@ class MultiWOZDataset(Dataset):
                     self.turn_type.append(1)
                 elif turn["dial_id"][0:2]=="ub":
                     self.turn_type.append(2)
-                elif turn["dial_id"][0:2]=="co":
+                elif turn["dial_id"][0:2]=="co" or turn["dial_id"][0:3]=="d2d":
                     self.turn_type.append(3)
                 elif turn["dial_id"][0:2]=="sq":
                     self.turn_type.append(4)
@@ -204,7 +280,11 @@ class MultiWOZDataset(Dataset):
 
                 dial_history.append(turn_text)
                 span_history.append(turn_span_info)
-
+            '''
+            count=count+1
+            if count==20:
+                break
+            '''
 
 
     def flatten_dial_history(self, dial_history, span_history, len_postfix, context_size):
@@ -274,6 +354,26 @@ class MultiWOZDataset(Dataset):
         return self.turn_encoder_input_ids_1[index],self.turn_encoder_input_ids_2[index],self.turn_span_label_ids[index], self.turn_belief_label_ids[index], \
                self.turn_resp_label_ids[index],self.turn_type[index]
 
+class CollatorTrain_fs(object):
+    def __init__(self, pad_token_id, tokenizer):
+        super().__init__()
+        self.pad_token_id = pad_token_id
+        self.tokenizer = tokenizer
+
+    def __call__(self, batch):
+        batch_encoder_input_ids = []
+        batch_resp_label_ids = []
+        batch_size = len(batch)
+
+        for i in range(batch_size):
+            encoder_input_ids, resp_label_ids = batch[i]
+            batch_encoder_input_ids.append(torch.tensor(encoder_input_ids, dtype=torch.long))
+            batch_resp_label_ids.append(torch.tensor(resp_label_ids, dtype=torch.long))
+
+        batch_encoder_input_ids = pad_sequence(batch_encoder_input_ids, batch_first=True, padding_value=self.pad_token_id)
+        batch_resp_label_ids = pad_sequence(batch_resp_label_ids, batch_first=True, padding_value=self.pad_token_id)
+
+        return batch_encoder_input_ids, batch_resp_label_ids
 
 class CollatorPredict(object):
     def __init__(self):
@@ -474,7 +574,7 @@ class BaseIterator(object):
 
         context = list(chain(*windowed_context))
 
-        return context, context_span_info
+        return context,context_span_info
 
     def tensorize(self, ids):
         return torch.tensor(ids, dtype=torch.long)
@@ -773,6 +873,7 @@ class BaseReader(object):
        # print(tokenizer.encode("[taxi]"))
        #print(tokenizer.encode("[chit]"))
        # print(tokenizer.encode("<bos_belief>"))
+
         return tokenizer
 
     @property
@@ -841,7 +942,7 @@ class MultiWOZReader(BaseReader):
         self.db = MultiWozDB(os.path.join("data", "MultiWOZ_{}".format(self.version), "db"))
         #todo maxlength
         super(MultiWOZReader, self).__init__(backbone,cfg)
-        self.tokenizer.model_max_length = 1800
+        self.tokenizer.model_max_length = 4500
 
     def get_data_dir(self):
         print(self.cfg.data_type)
@@ -865,6 +966,10 @@ class MultiWOZReader(BaseReader):
             return os.path.join("data","CC","DailyDialog")
         elif self.cfg.data_type=="CC_FU_DD":
             return os.path.join("data","CC","CC_FU_DD")
+        elif self.cfg.data_type=="MUL_NEW":
+            return os.path.join("data","multi_data_new")
+        elif self.cfg.data_type=="QA_CO_SQ":
+            return os.path.join("data", "CQA","QA_CO_SQ")
         else:
             return os.path.join("data","multi_scene")
 
@@ -1164,7 +1269,7 @@ class MultiWOZReader(BaseReader):
 
     def resp_gen2resp_tihuan(self,resp_gen,turn):
         # 替换占位符2022/3/25 qgf
-        cons = self.bspn_to_constraint_dict(self.tokenizer.decode(turn["bspn_gen_with_span"]))
+        cons = self.bspn_to_constraint_dict(self.tokenizer.decode(turn["bspn_gen"]))
         domain = turn["turn_domain"]
         tihuan=self.tokenizer.decode(resp_gen)
         for d in domain:

@@ -63,7 +63,7 @@ def main():
 
         logger.info("Set random seed to %d", cfg.seed)
 
-    cfg.learning_rate = 5e-4 * cfg.batch_size_per_gpu * cfg.num_gpus / 8
+    cfg.learning_rate = 5e-5 * cfg.batch_size_per_gpu * cfg.num_gpus / 8
 
     runner = MultiWOZRunner(cfg)
 

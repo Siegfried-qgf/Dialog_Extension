@@ -24,7 +24,7 @@ from transformers.modeling_outputs import BaseModelOutput
 from tensorboardX import SummaryWriter
 from utils.io_utils import load_json,save_json
 from model import T5WithSpan, T5WithTokenSpan
-from reader import MultiWOZIterator, MultiWOZReader,MultiWOZDataset, SequentialDistributedSampler, CollatorTrain
+from reader import MultiWOZIterator, MultiWOZReader,MultiWOZDataset, SequentialDistributedSampler, CollatorTrain, MultiWOZDataset_fs,CollatorTrain_fs
 from evaluator import MultiWozEvaluator
 from nltk import word_tokenize
 from utils import definitions,MyDataLoader
@@ -33,6 +33,7 @@ from utils.ddp_utils import reduce_mean, reduce_sum
 import eval_chitchat
 import eval_CRS
 import eval_QA
+from datasets import load_metric
 logger = get_or_create_logger(__name__)
 
 class Reporter(object):
@@ -271,7 +272,13 @@ class BaseRunner(metaclass=ABCMeta):
 
         num_count = label.ne(pad_id).long().sum()
         num_correct = torch.eq(pred, label).long().sum()
-
+        '''
+        print("pred铺平:" + str(self.reader.tokenizer.decode(pred)))
+        print("label铺平:" + str(self.reader.tokenizer.decode(label)))
+        print("num_count:" + str(num_count))
+        print("num_correct:" + str(num_correct))
+        input()
+        '''
         return num_correct, num_count
 
     def count_spans(self, pred, label):
@@ -347,10 +354,17 @@ class MultiWOZRunner(BaseRunner):
         belief_loss = belief_outputs[0]
         belief_pred = belief_outputs[1]
 
+
         span_loss = belief_outputs[2]
         span_pred = belief_outputs[3]
-
-
+        '''
+        print("input1:" + str(self.reader.tokenizer.decode(inputs_1[0])))
+        print("input2:" + str(self.reader.tokenizer.decode(inputs_1[1])))
+        print("pred1:" + str(self.reader.tokenizer.decode(belief_pred[0])))
+        print("pred2:" + str(self.reader.tokenizer.decode(belief_pred[1])))
+        print("label1:" + str(self.reader.tokenizer.decode(belief_labels[0])))
+        print("label2:" + str(self.reader.tokenizer.decode(belief_labels[1])))
+        '''
         if self.cfg.task == "e2e":
             attention_mask_2 = torch.where(inputs_2 == self.reader.pad_token_id, 0, 1)
             #last_hidden_state = belief_outputs[5]
@@ -489,51 +503,67 @@ class MultiWOZRunner(BaseRunner):
 
         return step_outputs_all
 
+    def id2movie(self,v):
+        for key, value in self.entity2entityId.items():
+            if value == v:
+                #print(key)
+                if type(key)== str:
+                    return key[29:-1]
+                else:
+                    warnings.warn("key应为str" + str(value))
+        warnings.warn("没有对应电影"+str(value))
+        return ""
 
     def train_epoch_separate(self, data_loader, optimizer, scheduler, reporter=None):
         self.model.train()
         self.model.zero_grad()
         epoch_step, train_loss_bs,train_loss_resp = 0, 0.,0.
+        count=0
         for batch in data_loader:
-
             start_time_bs = time.time()
-            inputs, span_labels, belief_labels, resp_labels,turn_type = batch
-
-            #loss, step_outputs = self.step_fn(inputs, span_labels, belief_labels, resp_labels)
+            inputs, span_labels, belief_labels, resp_labels, turn_type = batch
+            (inputs1,inputs2)=inputs
+            #print(self.reader.tokenizer.decode(inputs1[0]))
+            #print(self.reader.tokenizer.decode(belief_labels[0]))
+            #input()
             loss_bs,step_outputs_bs=self.step_fn_bs(inputs,span_labels,belief_labels)
 
             if self.cfg.grad_accum_steps > 1:
                 loss_bs = loss_bs / self.cfg.grad_accum_steps
-
             loss_bs.backward()
+
             train_loss_bs += loss_bs.item()
 
             torch.nn.utils.clip_grad_norm_(
                 self.model.parameters(), self.cfg.max_grad_norm)
 
             if (epoch_step + 1) % self.cfg.grad_accum_steps == 0:
-                optimizer.step()
-                scheduler.step()
-                optimizer.zero_grad()
-                lr = scheduler.get_last_lr()[0]
+                    optimizer.step()
+                    scheduler.step()
+                    optimizer.zero_grad()
+                    lr = scheduler.get_last_lr()[0]
 
-                if reporter is not None:
-                    reporter.step(start_time_bs, lr, step_outputs_bs)
+                    if reporter is not None:
+                        reporter.step(start_time_bs, lr, step_outputs_bs)
 
             if self.cfg.train_subnet:
-                # dst结束 保存参数
                 pre_dict=copy.deepcopy(self.model.module.state_dict())
                 if turn_type[0] == 0:
                     self.mask_dict=self.mask_dict_tod
                 elif turn_type[0]== 1 or turn_type[0]==2:
                     self.mask_dict=self.mask_dict_cc
                 elif turn_type[0]==3 or turn_type[0]==4:
-                    self.mask_dict=self.mask_dict_qa
+                    #self.mask_dict=self.mask_dict_qa
+
+                    for key, value in self.mask_dict_cc.items():
+                        if key.find("encoder")>=0:
+                            value.data = self.mask_dict_qa[key].data
+                    self.mask_dict = self.mask_dict_cc
+
                 elif turn_type[0]==5:
                     self.mask_dict=self.mask_dict_crs
                 else:
                     warnings.warn("找不到该类型"+turn_type[0])
-
                 for k, v in self.model.module.named_parameters():
                     if k in self.mask_dict:
                         v.data = v * self.mask_dict[k]
@@ -563,8 +593,8 @@ class MultiWOZRunner(BaseRunner):
                     if k in self.mask_dict:
                         retained_mask = self.mask_dict[k] == False
                         v.data = v.data * self.mask_dict[k] + pre_dict[k] * retained_mask
-
             epoch_step += 1
+            count+=1
 
         if self.cfg.num_gpus > 1:
             torch.distributed.barrier()
@@ -608,10 +638,11 @@ class MultiWOZRunner(BaseRunner):
 
     def train(self):
         if self.cfg.train_subnet:
-            self.mask_dict_tod=torch.load("./ckpt/TOD_only_epoch10/ckpt-epoch8/subnet.pth")
-            self.mask_dict_cc=torch.load("./ckpt/CC_UB_FU_epoch10/ckpt-epoch10/subnet.pth")
-            self.mask_dict_qa = torch.load("./ckpt/QA_Squad_ConvQA_10epoch/ckpt-epoch10/subnet.pth")
-            self.mask_dict_crs = torch.load("./ckpt/CRS_only_epoch20/ckpt-epoch20/subnet.pth")
+            self.mask_dict_tod=torch.load("./ckpt/TOD_only_epoch10/ckpt-epoch8/subnet0.2.pth")
+            self.mask_dict_cc=torch.load("./ckpt/CC_UB_FU_epoch10/ckpt-epoch10/subnet0.2.pth")
+            self.mask_dict_qa = torch.load("./ckpt/QA_Squad_ConvQA_10epoch_2/ckpt-epoch10/subnet0.2.pth")
+            self.mask_dict_crs = torch.load("./ckpt/CRS_only_epoch20/ckpt-epoch20/subnet0.2.pth")
+
             del self.mask_dict_tod["shared.weight"]
             del self.mask_dict_cc["shared.weight"]
             del self.mask_dict_qa["shared.weight"]
@@ -639,7 +670,13 @@ class MultiWOZRunner(BaseRunner):
         train_dataset = MultiWOZDataset(self.reader, 'train', self.cfg.task, self.cfg.ururu,
                                         context_size=self.cfg.context_size, num_dialogs=self.cfg.num_train_dialogs,
                                         excluded_domains=self.cfg.excluded_domains)
-
+        '''
+        ckpt_para = torch.load("./ckpt/TOD_only_epoch10/ckpt-epoch8/pytorch_model.bin",map_location=torch.device('cpu'))
+        if self.cfg.num_gpus > 1:
+            self.model.module.load_state_dict(ckpt_para, strict=False)
+        else:
+            self.model.load_state_dict(ckpt_para, strict=False)
+        '''
         if self.cfg.num_gpus > 1:
             train_sampler = DistributedSampler(train_dataset)
         else:
@@ -650,12 +687,17 @@ class MultiWOZRunner(BaseRunner):
             train_dataloader = MyDataLoader.DataLoader(train_dataset, sampler=train_sampler, batch_size=self.cfg.batch_size_per_gpu,collate_fn=train_collator,drop_last=True)
         else:
             train_dataloader=DataLoader(train_dataset, sampler=train_sampler, batch_size=self.cfg.batch_size_per_gpu,collate_fn=train_collator)
-        num_training_steps_per_epoch = len(train_dataloader)
+        num_training_steps_per_epoch = len(train_dataloader)*2
         optimizer, scheduler = self.get_optimizer_and_scheduler(
             num_training_steps_per_epoch, self.cfg.batch_size_per_gpu)
 
         reporter = Reporter(self.cfg.log_frequency, self.cfg.model_dir)
-
+        '''
+        if self.cfg.train_subnet:
+            combined_para = torch.load("./ckpt/MUL_epoch10_sparsesharing_combinedini0.2/ckpt-epoch6/pytorch_model.bin",
+                                       map_location=torch.device('cpu'))
+            self.model.module.load_state_dict(combined_para)
+        '''
         max_score = 0
         for epoch in range(1, self.cfg.epochs + 1):
             if self.cfg.num_gpus > 1:
@@ -679,6 +721,7 @@ class MultiWOZRunner(BaseRunner):
 
             if self.cfg.num_gpus > 1:
                 torch.distributed.barrier()
+
 
     def validation(self):
         self.model.eval()
@@ -713,9 +756,6 @@ class MultiWOZRunner(BaseRunner):
         torch.set_grad_enabled(True)
 
         return train_loss_bs+train_loss_resp
-
-
-
 
     def _train_epoch(self, train_iterator, optimizer, scheduler, reporter=None):
         self.model.train()
@@ -811,7 +851,7 @@ class MultiWOZRunner(BaseRunner):
                                        include_embedding=self.cfg.include_embedding,
                                        exclude_output_proj=self.cfg.exclude_output_proj)
 
-        mask_save_path = os.path.join(self.cfg.ckpt, 'subnet.pth')
+        mask_save_path = os.path.join(self.cfg.ckpt, 'subnet0.3.pth')
         torch.save(mask_dict, mask_save_path)
 
         return mask_dict
@@ -834,10 +874,13 @@ class MultiWOZRunner(BaseRunner):
             decoded = {}
 
             decoded["bspn_gen"] = bspn
+
             #todo see yixia
             # update bspn using span output
+            '''
             if span_outputs is not None and input_ids is not None:
                 span_output = span_outputs[i]
+                print(span_output)
                 input_id = input_ids[i]
 
                 eos_idx = input_id.index(self.reader.eos_token_id)
@@ -848,7 +891,8 @@ class MultiWOZRunner(BaseRunner):
                 bos_user_id = self.reader.get_token_id(definitions.BOS_USER_TOKEN)
 
                 span_output = span_output[:eos_idx]
-
+                print(span_output)
+                
                 b_slot = None
                 for t, span_token_idx in enumerate(span_output):
                     turn_id = max(input_id[:t].count(bos_user_id) - 1, 0)
@@ -961,7 +1005,7 @@ class MultiWOZRunner(BaseRunner):
                     eos_token=definitions.EOS_BELIEF_TOKEN)
 
                 decoded["bspn_gen_with_span"] = bspn_gen_with_span
-
+            '''
             batch_decoded.append(decoded)
 
         return batch_decoded
@@ -1134,6 +1178,35 @@ class MultiWOZRunner(BaseRunner):
          return self.loop.top10(context,response,mask_response,concept_mask,dbpedia_mask,entity_vec,movie,concept_vec,db_vec,entity_vector,rec)
 
     def predict(self):
+        if self.cfg.train_subnet:
+            self.mask_dict_tod = torch.load("./ckpt/TOD_only_epoch10/ckpt-epoch8/subnet0.2.pth")
+            self.mask_dict_cc = torch.load("./ckpt/CC_UB_FU_epoch10/ckpt-epoch10/subnet0.2.pth")
+            self.mask_dict_qa = torch.load("./ckpt/QA_Squad_ConvQA_10epoch_2/ckpt-epoch10/subnet0.2.pth")
+            self.mask_dict_crs = torch.load("./ckpt/CRS_only_epoch20/ckpt-epoch20/subnet0.2.pth")
+
+            del self.mask_dict_tod["shared.weight"]
+            del self.mask_dict_cc["shared.weight"]
+            del self.mask_dict_qa["shared.weight"]
+            del self.mask_dict_crs["shared.weight"]
+
+            del self.mask_dict_tod['lm_head.weight']
+            del self.mask_dict_cc['lm_head.weight']
+            del self.mask_dict_qa['lm_head.weight']
+            del self.mask_dict_crs['lm_head.weight']
+
+            del self.mask_dict_tod['resp_lm_head.weight']
+            del self.mask_dict_cc['resp_lm_head.weight']
+            del self.mask_dict_qa['resp_lm_head.weight']
+            del self.mask_dict_crs['resp_lm_head.weight']
+
+            for k, v in self.mask_dict_tod.items():
+                self.mask_dict_tod[k] = v.to(self.cfg.device)
+            for k, v in self.mask_dict_cc.items():
+                self.mask_dict_cc[k] = v.to(self.cfg.device)
+            for k, v in self.mask_dict_qa.items():
+                self.mask_dict_qa[k] = v.to(self.cfg.device)
+            for k, v in self.mask_dict_crs.items():
+                self.mask_dict_crs[k] = v.to(self.cfg.device)
         self.model.eval()
 
         if self.cfg.num_gpus > 1:
@@ -1148,6 +1221,7 @@ class MultiWOZRunner(BaseRunner):
         eval_dial_list = None
         results = {}
         #对每个batch
+        pre_dict = copy.deepcopy(self.model.state_dict())
         for dial_batch in tqdm(pred_batches, total=len(pred_batches), desc="Prediction"):
             batch_size = len(dial_batch)
             #每个item有这三个列表
@@ -1193,6 +1267,10 @@ class MultiWOZRunner(BaseRunner):
                     batch_encoder_input_ids_1 == self.reader.pad_token_id, 0, 1)
                 # belief tracking
                 #encoder
+
+
+                if self.cfg.train_subnet:
+                    self.model.load_state_dict(pre_dict)
                 with torch.no_grad():
                     encoder_outputs_1 = model(input_ids=batch_encoder_input_ids_1,
                                                  attention_mask=attention_mask,
@@ -1233,6 +1311,33 @@ class MultiWOZRunner(BaseRunner):
                 decoded_belief_outputs = self.finalize_bspn(
                     belief_outputs, domain_history, constraint_dicts, pred_spans, input_ids)
 
+                if self.cfg.train_subnet:
+                    '''
+                    if self.cfg.data_type=="TOD":
+                        self.mask_dict = self.mask_dict_tod
+                    elif self.cfg.data_type=="CC_FU" or self.cfg.data_type=="CC_UB":
+                        self.mask_dict=self.mask_dict_cc
+                    elif self.cfg.data_type=="QA" or self.cfg.data_type=="QA_S":
+                        self.mask_dict=self.mask_dict_qa
+                    else:
+                        self.mask_dict=self.mask_dict_crs
+                    '''
+
+                    for key, value in self.mask_dict_cc.items():
+                        if key.find("encoder") >= 0:
+                            value.data = self.mask_dict_qa[key].data
+                    self.mask_dict = self.mask_dict_cc
+
+                    '''
+                    for key,value in self.mask_dict_cc.items():
+                        value.data = value.data + self.mask_dict_qa[key].data
+                    self.mask_dict=self.mask_dict_cc
+                    '''
+                    #self.mask_dict = self.mask_dict_qa
+                    for k, v in self.model.named_parameters():
+                        if k in self.mask_dict:
+                            v.data = v * self.mask_dict[k]
+
                 for t, turn in enumerate(turn_batch):
                     turn.update(**decoded_belief_outputs[t])
                 #DST FINISHED
@@ -1245,7 +1350,8 @@ class MultiWOZRunner(BaseRunner):
                         for i,turn in enumerate(turn_batch):
 
                             if self.cfg.add_auxiliary_task:
-                                bspn_gen = turn["bspn_gen_with_span"]
+                                #bspn_gen = turn["bspn_gen_with_span"]
+                                bspn_gen = turn["bspn_gen"]
                             else:
                                 bspn_gen = turn["bspn_gen"]
 
@@ -1260,6 +1366,7 @@ class MultiWOZRunner(BaseRunner):
 
                             #4/20
                             else:
+                                '''
                                 if "recommend_chit" not in str(bspn_gen):
                                     top10 =self.bspn_to_db_recommend(user_history[i],turn)
                                     top10_str = ""
@@ -1267,13 +1374,18 @@ class MultiWOZRunner(BaseRunner):
                                         top10_str += item + " "
                                     top10_str=top10_str.lower()
                                     db_token = "[db_recommend] " + top10_str
+                                '''
+                                if turn["match"]!=0:
+                                    db_token="[db_recommend] "+self.id2movie(turn["match"])
                                 else:
                                     db_token = "[db_recommend] "
+
                             dbpn_gen = self.reader.encode_text(
                                 db_token,
                                 bos_token=definitions.BOS_DB_TOKEN,
                                 eos_token=definitions.EOS_DB_TOKEN)
                             turn["dbpn_gen"] = dbpn_gen
+
                         for t, turn in enumerate(turn_batch):
 
                             context, _ = self.iterator.flatten_dial_history(
@@ -1377,18 +1489,20 @@ class MultiWOZRunner(BaseRunner):
                         decoded_resp_outputs = self.finalize_resp(resp_outputs)
                         for t, turn in enumerate(turn_batch):
                             #print(t)
-                            '''
+
                             resp_tihuan=self.reader.resp_gen2resp_tihuan(decoded_resp_outputs[t]["resp_gen"],turn)
-                            print(resp_tihuan)
+                            #print(resp_tihuan)
                             tihuan.append(self.reader.encode_text(resp_tihuan))
-                            '''
+
 
                             turn.update(**decoded_resp_outputs[t])
-                            #print(str(t) + " " + self.reader.tokenizer.decode(turn["bspn_gen"]))
-                            #print(str(t) + " " + self.reader.tokenizer.decode(turn["dbpn_gen"]))
-                            #print(str(t) + " " + self.reader.tokenizer.decode(turn["aspn_gen"]))
-                            #print(str(t)+ " "+self.reader.tokenizer.decode(decoded_resp_outputs[t]["resp_gen"]))
 
+                            '''
+                            print(str(t) + " " + self.reader.tokenizer.decode(turn["bspn_gen"]))
+                            print(str(t) + " " + self.reader.tokenizer.decode(turn["dbpn_gen"]))
+                            print(str(t) + " " + self.reader.tokenizer.decode(turn["aspn_gen"]))
+                            print(str(t)+ " "+self.reader.tokenizer.decode(decoded_resp_outputs[t]["resp_gen"]))
+                            '''
                             #print(tihuan)
 
 
@@ -1403,7 +1517,8 @@ class MultiWOZRunner(BaseRunner):
                         pv_bspn = turn["bspn"]
                     else:
                         if self.cfg.add_auxiliary_task:
-                            pv_bspn = turn["bspn_gen_with_span"]
+                            #pv_bspn = turn["bspn_gen_with_span"]
+                            pv_bspn = turn["bspn_gen"]
                         else:
                             pv_bspn = turn["bspn_gen"]
 
@@ -1423,7 +1538,9 @@ class MultiWOZRunner(BaseRunner):
                         else:
                             pv_resp = turn["resp"]
                     else:
+                        #pv_resp = tihuan[t]
                         pv_resp = turn["resp_gen"]
+
                     if self.cfg.ururu:
                         pv_text += pv_resp
                     else:
@@ -1452,6 +1569,7 @@ class MultiWOZRunner(BaseRunner):
 
 
         if self.cfg.data_type=="QA":
+
             rqa = []
             for dial_id, dial in results.items():
                 for turn in dial:
@@ -1466,6 +1584,7 @@ class MultiWOZRunner(BaseRunner):
             f1=eval_QA.eval_qa("./data/CQA/coqa-dev-v1.0.json", "outqa.json")
             logger.info('f1: %.1f' % f1)
             score = f1
+
 
 
         if self.cfg.data_type=="QA_S":
@@ -1485,6 +1604,358 @@ class MultiWOZRunner(BaseRunner):
 
         return score
 
+    def predict_fs(self):
+        self.model.eval()
+        model = self.model
+        pred_batches, _, _, _ = self.iterator.get_batches(
+            self.cfg.pred_data_type, self.cfg.batch_size_per_gpu_eval,
+            1, excluded_domains=self.cfg.excluded_domains)
+        early_stopping = True if self.cfg.beam_size > 1 else False
+        eval_dial_list = None
+        results = {}
+        for dial_batch in tqdm(pred_batches, total=len(pred_batches), desc="Prediction"):
+            batch_size = len(dial_batch)
+            dial_history = [[] for _ in range(batch_size)]
+            domain_history = [[] for _ in range(batch_size)]
+
+            constraint_dicts = [OrderedDict() for _ in range(batch_size)]
+            # 对同一turn的batch
+            for turn_batch in self.iterator.transpose_batch(dial_batch):
+                batch_encoder_input_ids_1 = []
+                for t, turn in enumerate(turn_batch):
+                    context,_= self.iterator.flatten_dial_history(
+                        dial_history[t], [], len(turn["user"]), self.cfg.context_size)
+                    encoder_input_ids_1 = context + turn["user"]
+                    batch_encoder_input_ids_1.append(self.iterator.tensorize(encoder_input_ids_1))
+                    turn_domain = turn["turn_domain"][-1]
+                    if "[" in turn_domain:
+                        turn_domain = turn_domain[1:-1]
+                    domain_history[t].append(turn_domain)
+                batch_encoder_input_ids_1 = pad_sequence(batch_encoder_input_ids_1,
+                                                     batch_first=True,
+                                                     padding_value=self.reader.pad_token_id)
+                batch_encoder_input_ids_1 = batch_encoder_input_ids_1.to(self.cfg.device)
+                attention_mask = torch.where(
+                    batch_encoder_input_ids_1 == self.reader.pad_token_id, 0, 1)
+
+                with torch.no_grad():
+                    encoder_outputs_1 = model(input_ids=batch_encoder_input_ids_1,
+                                          attention_mask=attention_mask,
+                                          return_dict=False,
+                                          encoder_only=True,
+                                          )
+
+                    span_outputs, encoder_hidden_states = encoder_outputs_1
+                    if isinstance(encoder_hidden_states, tuple):
+                        last_hidden_state = encoder_hidden_states[0]
+                    else:
+                        last_hidden_state = encoder_hidden_states
+                    # wrap up encoder outputs
+                    encoder_outputs_1 = BaseModelOutput(
+                        last_hidden_state=last_hidden_state)
+
+                    with torch.no_grad():
+                        resp_outputs = model.generate(
+                        encoder_outputs=encoder_outputs_1,
+                        attention_mask=attention_mask,
+                        eos_token_id=self.reader.eos_token_id,
+                        max_length=300,
+                        do_sample=self.cfg.do_sample,
+                        num_beams=self.cfg.beam_size,
+                        early_stopping=early_stopping,
+                        temperature=self.cfg.temperature,
+                        top_k=self.cfg.top_k,
+                        top_p=self.cfg.top_p,
+                        decoder_type="resp")
+                    resp_outputs = resp_outputs.cpu().numpy().tolist()
+                    for t, turn in enumerate(turn_batch):
+                        if self.reader.eos_token_id in resp_outputs[t]:
+                            eos_idx = resp_outputs[t].index(self.reader.eos_token_id)
+                            resp_outputs[t] = resp_outputs[t][:eos_idx]
+                            print(self.reader.tokenizer.decode(resp_outputs[t]))
+                        turn.update({"resp_gen":resp_outputs[t]})
+                    for t, turn in enumerate(turn_batch):
+                        pv_text = copy.copy(turn["user"])
+                        pv_resp = turn["resp_gen"]
+                        pv_text += pv_resp
+                        dial_history[t].append(pv_text)
+
+            result = self.iterator.get_readable_batch(dial_batch)
+            results.update(**result)
+
+        if self.cfg.output:
+            save_json(results,self.cfg.output)
 
 
 
+
+
+            '''
+            belief_outputs = belief_outputs.cpu().numpy().tolist()
+
+            decoded_belief_outputs = self.finalize_bspn(
+                belief_outputs, domain_history, constraint_dicts, pred_spans, input_ids)
+
+
+            for t, turn in enumerate(turn_batch):
+                turn.update(**decoded_belief_outputs[t])
+            # DST FINISHED
+            if self.cfg.task == "e2e":
+                dbpn = []
+                if self.cfg.use_true_dbpn:
+                    for turn in turn_batch:
+                        dbpn.append(turn["dbpn"])
+                else:
+                    for i, turn in enumerate(turn_batch):
+
+                        if self.cfg.add_auxiliary_task:
+                            # bspn_gen = turn["bspn_gen_with_span"]
+                            bspn_gen = turn["bspn_gen"]
+                        else:
+                            bspn_gen = turn["bspn_gen"]
+
+                        # bspn_gen = turn["bspn"]
+
+                        bspn_gen = self.reader.tokenizer.decode(
+                            bspn_gen, clean_up_tokenization_spaces=False)
+
+                        if turn["turn_domain"][0] != '[recommend]':
+                            db_token = self.reader.bspn_to_db_pointer(bspn_gen,
+                                                                      turn["turn_domain"])
+
+                        # 4/20
+                        else:
+                            
+                            if turn["match"] != 0:
+                                db_token = "[db_recommend] " + self.id2movie(turn["match"])
+                            else:
+                                db_token = "[db_recommend] "
+
+                        dbpn_gen = self.reader.encode_text(
+                            db_token,
+                            bos_token=definitions.BOS_DB_TOKEN,
+                            eos_token=definitions.EOS_DB_TOKEN)
+                        turn["dbpn_gen"] = dbpn_gen
+
+                    for t, turn in enumerate(turn_batch):
+                        context, _ = self.iterator.flatten_dial_history(
+                            dial_history[t], [], (len(turn["user"]) + len(turn["dbpn_gen"]) + len(turn["bspn_gen"])),
+                            self.cfg.context_size)
+                        # 4/20
+                        encoder_input_ids_2 = context + turn["user"] + turn["bspn_gen"] + turn["dbpn_gen"] + [
+                            self.reader.eos_token_id]
+                        batch_encoder_input_ids_2.append(self.iterator.tensorize(encoder_input_ids_2))
+                    batch_encoder_input_ids_2 = pad_sequence(batch_encoder_input_ids_2,
+                                                             batch_first=True,
+                                                             padding_value=self.reader.pad_token_id)
+                    batch_encoder_input_ids_2 = batch_encoder_input_ids_2.to(self.cfg.device)
+
+                    attention_mask_2 = torch.where(
+                        batch_encoder_input_ids_2 == self.reader.pad_token_id, 0, 1)
+                    # dbpn.append(dbpn_gen)
+              
+
+                # aspn has different length
+                # 如果用标注的aspn
+                if self.cfg.use_true_curr_aspn:
+
+                    for t, _dbpn in enumerate(dbpn):
+                        resp_decoder_input_ids = self.iterator.tensorize([_dbpn])
+
+                        resp_decoder_input_ids = resp_decoder_input_ids.to(self.cfg.device)
+
+                        encoder_outputs = BaseModelOutput(
+                            last_hidden_state=last_hidden_state[t].unsqueeze(0))
+
+                        with torch.no_grad():
+                            resp_outputs = model.generate(
+                                encoder_outputs=encoder_outputs,
+                                attention_mask=attention_mask[t].unsqueeze(0),
+                                decoder_input_ids=resp_decoder_input_ids,
+                                eos_token_id=self.reader.eos_token_id,
+                                max_length=300,
+                                do_sample=self.cfg.do_sample,
+                                num_beams=self.cfg.beam_size,
+                                early_stopping=early_stopping,
+                                temperature=self.cfg.temperature,
+                                top_k=self.cfg.top_k,
+                                top_p=self.cfg.top_p,
+                                decoder_type="resp")
+
+                            resp_outputs = resp_outputs.cpu().numpy().tolist()
+
+                            decoded_resp_outputs = self.finalize_resp(resp_outputs)
+
+                            turn_batch[t].update(**decoded_resp_outputs[0])
+
+                else:
+                  
+                    with torch.no_grad():
+                        encoder_outputs_2 = model(input_ids=batch_encoder_input_ids_2,
+                                                  attention_mask=attention_mask_2,
+                                                  return_dict=False,
+                                                  encoder_only=True,
+                                                  add_auxiliary_task=self.cfg.add_auxiliary_task)
+
+                        span_outputs_2, encoder_hidden_states_2 = encoder_outputs_2
+                        if isinstance(encoder_hidden_states_2, tuple):
+                            last_hidden_state_2 = encoder_hidden_states_2[0]
+                        else:
+                            last_hidden_state_2 = encoder_hidden_states_2
+                        # wrap up encoder outputs
+                        encoder_outputs_2 = BaseModelOutput(
+                            last_hidden_state=last_hidden_state_2)
+                    # response generation
+                    with torch.no_grad():
+                        resp_outputs = model.generate(
+                            encoder_outputs=encoder_outputs_2,
+                            attention_mask=attention_mask_2,
+                            eos_token_id=self.reader.eos_token_id,
+                            max_length=300,
+                            do_sample=self.cfg.do_sample,
+                            num_beams=self.cfg.beam_size,
+                            early_stopping=early_stopping,
+                            temperature=self.cfg.temperature,
+                            top_k=self.cfg.top_k,
+                            top_p=self.cfg.top_p,
+                            decoder_type="resp")
+
+                    resp_outputs = resp_outputs.cpu().numpy().tolist()
+
+                    decoded_resp_outputs = self.finalize_resp(resp_outputs)
+                    for t, turn in enumerate(turn_batch):
+                        # print(t)
+
+                        resp_tihuan = self.reader.resp_gen2resp_tihuan(decoded_resp_outputs[t]["resp_gen"], turn)
+                        # print(resp_tihuan)
+                        tihuan.append(self.reader.encode_text(resp_tihuan))
+
+                        turn.update(**decoded_resp_outputs[t])
+
+                        
+                        # print(tihuan)
+
+            # update dial_history
+            for t, turn in enumerate(turn_batch):
+                pv_text = copy.copy(turn["user"])
+                if turn["turn_domain"][0] == "[recommend]":
+                    user_history[t].append(self.reader.tokenizer.decode(turn["resp_gen"][1:-1]))
+
+                if self.cfg.use_true_prev_bspn:
+                    pv_bspn = turn["bspn"]
+                else:
+                    if self.cfg.add_auxiliary_task:
+                        # pv_bspn = turn["bspn_gen_with_span"]
+                        pv_bspn = turn["bspn_gen"]
+                    else:
+                        pv_bspn = turn["bspn_gen"]
+
+                if self.cfg.use_true_dbpn:
+                    pv_dbpn = turn["dbpn"]
+                else:
+                    pv_dbpn = turn["dbpn_gen"]
+
+                if self.cfg.use_true_prev_aspn:
+                    pv_aspn = turn["aspn"]
+                else:
+                    pv_aspn = turn["aspn_gen"]
+
+                if self.cfg.use_true_prev_resp:
+                    if self.cfg.task == "e2e":
+                        pv_resp = turn["redx"]
+                    else:
+                        pv_resp = turn["resp"]
+                else:
+                    pv_resp = tihuan[t]
+
+                if self.cfg.ururu:
+                    pv_text += pv_resp
+                else:
+                    pv_text += (pv_bspn + pv_dbpn + pv_aspn + pv_resp)
+
+                dial_history[t].append(pv_text)
+
+        result = self.iterator.get_readable_batch(dial_batch)
+        results.update(**result)
+        '''
+
+    def train_fs(self):
+        train_dataset = MultiWOZDataset_fs(self.reader, 'train', self.cfg.task, self.cfg.ururu,
+                                        context_size=self.cfg.context_size, num_dialogs=self.cfg.num_train_dialogs,
+                                        excluded_domains=self.cfg.excluded_domains)
+        if self.cfg.num_gpus > 1:
+            train_sampler = DistributedSampler(train_dataset)
+        else:
+            train_sampler = sampler.RandomSampler(train_dataset)
+        train_collator = CollatorTrain_fs(self.reader.pad_token_id, self.reader.tokenizer)
+        train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=self.cfg.batch_size_per_gpu,
+                                      collate_fn=train_collator)
+        num_training_steps_per_epoch = len(train_dataloader)
+        optimizer, scheduler = self.get_optimizer_and_scheduler(
+            num_training_steps_per_epoch, self.cfg.batch_size_per_gpu)
+
+
+        max_score = 0
+        for epoch in range(1, self.cfg.epochs + 1):
+            if self.cfg.num_gpus > 1:
+                train_dataloader.sampler.set_epoch(epoch)
+
+            train_loss = self.train_epoch_fs(train_dataloader, optimizer, scheduler )
+
+            logger.info("done {}/{} epoch".format(epoch, self.cfg.epochs ))
+
+
+            if self.cfg.local_rank in [0, -1]:
+                self.save_model(epoch)
+
+            if self.cfg.num_gpus > 1:
+                torch.distributed.barrier()
+
+    def train_epoch_fs(self, data_loader, optimizer, scheduler):
+        self.model.train()
+        self.model.zero_grad()
+        epoch_step, train_loss = 0, 0.
+        for batch in iter(data_loader):
+            start_time = time.time()
+            inputs,resp_labels = batch
+
+            loss = self.step_fn_fs(inputs,  resp_labels)
+
+            loss.backward()
+            train_loss += loss.item()
+
+            torch.nn.utils.clip_grad_norm_(
+                self.model.parameters(), self.cfg.max_grad_norm)
+
+            if (epoch_step + 1) % self.cfg.grad_accum_steps == 0:
+                optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad()
+
+                lr = scheduler.get_last_lr()[0]
+
+            epoch_step += 1
+
+        return train_loss
+
+    def step_fn_fs(self, inputs, resp_labels):
+        inputs = inputs.to(self.cfg.device)
+        resp_labels = resp_labels.to(self.cfg.device)
+
+        #print(self.reader.tokenizer.decode(resp_labels[0]))
+        if self.cfg.task == "e2e":
+            attention_mask_2 = torch.where(inputs == self.reader.pad_token_id, 0, 1)
+
+            resp_outputs = self.model(input_ids=inputs,
+                                      attention_mask=attention_mask_2,
+                                      lm_labels=resp_labels,
+                                      return_dict=False,
+                                      decoder_type="resp")
+
+            resp_loss = resp_outputs[0]
+            resp_pred = resp_outputs[1]
+
+            num_resp_correct, num_resp_count = self.count_tokens(
+                resp_pred, resp_labels, pad_id=self.reader.pad_token_id)
+        loss = resp_loss
+        return loss

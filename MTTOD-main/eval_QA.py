@@ -236,17 +236,19 @@ def parse_args():
     parser.add_argument('--human', dest="human", action='store_true')
     if len(sys.argv) == 1:
         parser.print_help()
-        sys.exit(1)
+        sys.exit(1) 
     return parser.parse_args()
 '''
+
+def eval_qa(data_file,pred_file):
+    evaluator = CoQAEvaluator(data_file)
+    with open(pred_file) as f:
+        pred_data = CoQAEvaluator.preds_to_dict(pred_file)
+        score=evaluator.model_performance(pred_data)["overall"]
+        print(score["em"],score["f1"])
+    return score["f1"]
 if __name__=="__main__":
-    def eval_qa(data_file,pred_file):
-        evaluator = CoQAEvaluator(data_file)
-        with open(pred_file) as f:
-            pred_data = CoQAEvaluator.preds_to_dict(pred_file)
-            score=evaluator.model_performance(pred_data)["overall"]
-            print(score["em"],score["f1"])
-        return score["f1"]
+    f1 = eval_qa("./data/CQA/coqa-dev-v1.0.json", "outqa.json")
 
 
 
