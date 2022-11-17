@@ -62,3 +62,7 @@ the parameter data_type indicate the training data type
 bash test.sh
 ```
 
+## Acknowledgements
+
+This code is based on the released code (https://github.com/bepoetree/MTTOD) for "Improving End-to-End Task-Oriented Dialogue System with A Simple Auxiliary Task",  
+
