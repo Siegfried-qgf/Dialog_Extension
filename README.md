@@ -66,3 +66,6 @@ bash test.sh
 
 This code is based on the released code (https://github.com/bepoetree/MTTOD) for "Improving End-to-End Task-Oriented Dialogue System with A Simple Auxiliary Task",  
 
+## CheckPoint
+the checkpoint is available 
+please contact me with email gfquan21@m.fudan.edu.cn
